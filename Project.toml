@@ -1,0 +1,10 @@
+name = "DDR"
+uuid = "4a4e836b-f2ec-4376-8d7c-f73f805ca493"
+version = "0.1.0"
+authors = ["banana-bred <j.forer@posteo.net>"]
+
+[deps]
+DelimitedFiles = "8bb1440f-4735-579b-a4ab-409b98df4dab"
+
+[compat]
+DelimitedFiles = "1.9.1"
