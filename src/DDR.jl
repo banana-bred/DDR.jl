@@ -2,7 +2,7 @@ module DDR
 
 # using Distributed
 
-include("reson.jl")
+include("phases.jl")
 include("io.jl")
 
 end # module DDR
