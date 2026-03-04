@@ -1,43 +1,82 @@
 using DelimitedFiles: readdlm
 
-# -- types
-export EigenphData, EigenphRecord
-
 # -- procedures
 export read_eigenph_file
+export read_geom_file
 export discover_eigenph_files
 export load_eigenph_records
 export geom_index
+export select_cols
 
 """
-    EigenphData
+    read_header_tokens(path; comment_char = '#', header_selector = tokens -> true)
 
-single eigenphase dataset read from a single file
-- E: energy grid (ne-array)
-- δ: eigenphases (ne × nδ)
+Returns the header tokens from a file, like
+
+    #Energy   singlet A1     triplet A1     singlet A2 .....
+    #geom     Q
+
+Optinally, uses `header_selector` to filter extra comment lines that may appear
+to determine which line to use as the header in determining tokens.
 """
-struct EigenphData
-  E :: Vector{Float64}
-  δ :: Matrix{Float64}
+function _read_header_tokens(
+      path :: AbstractString
+    ; comment_char :: Char = '#'
+    , header_selector = tokens -> true
+  )
+  return open(path, "r") do io
+    for line in eachline(io)
+      # -- skip emtpy lines
+      s = strip(line)
+      isempty(s) && continue
+      # -- break when we find first non-comment line (allow for spaces before comment_char)
+      t = lstrip(s)
+      startswith(t, string(comment_char)) || break
+      # -- strip comment char
+      s2 = strip(chopprefix(t, string(comment_char)))
+      isempty(s2) && continue
+      tokens = split(s2)
+      isempty(tokens) && continue
+      header_selector(tokens) && return tokens
+    end
+  end
+  return nothing
 end
 
 """
-    EigenphRecord
+    names_from_tokens(tokens :: Vector{String}, ncols  :: Int)
 
-Generic container, attaches arbitrary metadata to EigenphData (irrep, mode..)
+["singlet", "A1", "triplet", "A1"..] -> ["singlet A1", "triplet A1"..]
+["Q"] -> ["Q"]
 """
-struct EigenphRecord{M}
-  data :: EigenphData
-  path :: String
-  meta :: M
+function names_from_tokens(tokens :: AbstractVector{<:AbstractString}, ncols :: Int)
+  ntokens =  length(tokens)
+  if ntokens == ncols
+    return tokens
+  end
+  if ntokens > 0 && ntokens %ncols == 0
+    # -- integer division ntokens / ncols
+    k = div(ntokens, ncols)
+    return [join(tokens[1+(j-1)*k : j*k], " ") for j in 1:ncols]
+  end
+  return ["col$(j)" for j in 1:ncols]
 end
 
 """
-    read_eigenph_file(path :: AbstractString; comments :: Bool = true, comment_char :: AbstractChar = '#')
+    read_eigenph_file(path :: AbstractString
+      ; comments :: Bool = true
+      , comment_char :: Char = '#'
+      , header_selector = t -> lowercase(t[1]) == "energy"
+    )
 
 Returns the energies E and eigenphases δ from the tabular data at path
 """
-function read_eigenph_file(path :: AbstractString; comments :: Bool = true, comment_char :: AbstractChar= '#')
+function read_eigenph_file(
+    path :: AbstractString
+  ; comments :: Bool = true
+  , comment_char :: Char= '#'
+  , header_selector = t -> lowercase(t[1]) == "energy"
+  )
 
   raw = readdlm(path, comments = comments, comment_char = comment_char)
 
@@ -46,9 +85,55 @@ function read_eigenph_file(path :: AbstractString; comments :: Bool = true, comm
 
   E = Float64.(raw[:, 1])
   δ = Float64.(raw[:, 2:end])
+  nδ = size(δ,  2)
 
-  return EigenphData(E, δ)
+  tokens = _read_header_tokens(path
+    ; comment_char = comment_char
+    , header_selector = header_selector
+  )
 
+  if tokens === nothing
+    names = ["phase$(iδ)" for iδ in 1:nδ]
+  else
+    # -- drop the first one
+    names = names_from_tokens(tokens[2:end], nδ)
+  end
+
+  return EigenphData(E, δ, names)
+
+end
+
+"""
+    read_geom_file(
+        path :: AbstractString
+      ; comments :: Bool = true
+      , comment_char :: Char= '#'
+      , header_selector = t -> occursin("geom", lowercase(t[1]))
+    )
+
+Returns the tuple (names,  raw):
+- names from tokens of the geometry file using the header_selector function
+- raw data obtained from file read while ignoring geometries
+"""
+function  read_geom_file(
+    path :: AbstractString
+  ; comments :: Bool = true
+  , comment_char :: Char= '#'
+  , header_selector = t -> occursin("geom", lowercase(t[1]))
+  )
+  raw = readdlm(path; comments=comments, comment_char=comment_char)
+  tokens = _read_header_tokens(path; comment_char=comment_char, header_selector = header_selector)
+  names = tokens === nothing ? ["cols$(iδ)" for iδ in 1:size(raw, 2)] : names_from_tokens(tokens, size(raw, 2))
+  return names, raw
+end
+
+"""
+    geom_value_map(raw; geom_col= 1, val_col= 2) -> Dict{Int, Float64}
+"""
+function geom_value_map(raw; geom_col :: Int = 1, val_col :: Int = 2)
+  g = Int.(raw[:, geom_col])
+  v = Float64.(raw[:, val_col])
+  return Dict(g[i] => v[i] for i in eachindex(g))
 end
 
 """
@@ -90,7 +175,7 @@ function discover_eigenph_files(
 
     for f in readdir(root)
       occursin(fname_regex, f) || continue
-      push!(files, joinpath(dir, f))
+      push!(files, joinpath(root, f))
     end
 
   end

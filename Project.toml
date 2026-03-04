@@ -5,6 +5,8 @@ authors = ["banana-bred <j.forer@posteo.net>"]
 
 [deps]
 DelimitedFiles = "8bb1440f-4735-579b-a4ab-409b98df4dab"
+Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 
 [compat]
 DelimitedFiles = "1.9.1"
+Plots = "1.41.6"

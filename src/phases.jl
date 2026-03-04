@@ -1,27 +1,29 @@
-export unwrap_eigenphases!
-export unwrap_records!
-export center_records_at
-export eigenphase_sum
+export unwrap_eigenphases!, unwrap_eigenphases
+export unwrap!, unwrap
+export center_records_at!
+export sum_eigenphases
 
 """
     unwrap_eigenphases!(
         E :: AbstractVector
-      , δ :: AbstractVector
+      , δ :: AbstractMatrix
       ; Emin = nothing
       , Emax = nothing
       , period = π
+      , kwargs...
     )
 
 Unwraps each column of δ(E) so that, at consecutive steps, the values change by at most ±period/2
 within [Emin, Emax] if supplied.
 Mutates δ and returns it unrwapped
 """
-function unwrap_eigephases!(
+function unwrap_eigenphases!(
       E :: AbstractVector
-    , δ :: AbstractVector
+    , δ :: AbstractMatrix
     ; Emin = nothing
     , Emax = nothing
     , period = π
+    , kwargs...
   )
 
   ne = length(E)
@@ -29,19 +31,19 @@ function unwrap_eigephases!(
   nδ = size(δ, 2)
 
   iestart = Emin === nothing ? 1 : max(1, searchsortedfirst(E, Emin))
-  ieend   = Emax === nothing ? ne : min(ne, searchsortedfirst(E, Emax))
+  ieend   = Emax === nothing ? ne : min(ne, searchsortedlast(E, Emax))
   ieend - iestart <1 && return δ
 
   half_period = period/2
 
-  for  i in 1:nδ
-    prev = δ[iestart, j]
+  for iδ in 1:nδ
+    prev = δ[iestart, iδ]
     for ie in iestart+1 : ieend
-      δ2 = δ[i, ie] - prev
+      δ2 = δ[ie, iδ] - prev
       # -- wrap  δ2 into (-half_period, +half_period]
       δ2 = mod(δ2  + half_period, period) - half_period
-      δ[i, ie] = prev + δ2
-      prev = δ[i, ie]
+      δ[ie, iδ] = prev + δ2
+      prev = δ[ie, iδ]
     end
   end
 
@@ -50,23 +52,80 @@ function unwrap_eigephases!(
 end
 
 """
-    unwrap_records!(records; kwargs...)
+    unwrap_eigenphases(E, δ; kwargs...) -> δ2
 
-Apply `unwrap_eigenphases!` to each record, in place.
+Unwraps each column of δ(E) so that, at consecutive steps, the values change by at most ±period/2
+within [Emin, Emax] if supplied.
+Does not mutate δ.
 """
-@inline function unwrap_records!(records; kwargs...)
-    for r in records
-        unwrap_eigenphases!(r.data.E, r.data.δ; kwargs...)
-    end
-    return records
+unwrap_eigenphases(E, δ; kwargs...) = unwrap_eigenphases!(E, copy(δ); kwargs...)
+
+
+"""
+    unwrap!(data :: EigenphData; kwargs...)
+
+Unwraps Eigenphase data.δ in place. Returns data
+"""
+function unwrap!(data :: EigenphData; kwargs...)
+  unwrap_eigenphases!(data.E, data.δ; kwargs...)
+  return data
 end
 
 """
-    linterp_at(E :: AbstractVector, y :: AbstractVector, x :: Real)
+    unwrap!(record :: EigenphRecord; kwargs...)
+
+Unwraps Eigenphase record.data.δ in place. Returns record
+"""
+function unwrap!(record :: EigenphRecord; kwargs...)
+  unwrap!(record.data; kwargs...)
+  return record
+end
+
+"""
+    unwrap!(records :: AbstractVector{<:EigenphRecord}; kwargs...)
+
+Unwraps Eigenphase records.data.δ in place. Returns records
+"""
+function unwrap!(records :: AbstractVector{<:EigenphRecord}; kwargs...)
+  for r in records
+    unwrap!(r; kwargs...)
+  end
+  return records
+end
+
+"""
+    unwrap(data :: EigenphData; kwargs...)
+
+Unwraps Eigenphase data.δ, without mutating data. Returns data
+"""
+function unwrap(data :: EigenphData; kwargs...)
+  return EigenphData(copy(data.E), unwrap_eigenphases(data.E, data.δ; kwargs...), copy(data.name))
+end
+
+"""
+    unwrap(record :: EigenphRecord; kwargs...)
+
+Unwraps Eigenphase record.data.δ, wihtout mutating record. Returns unwrapped record
+"""
+function unwrap(record :: EigenphRecord; kwargs...)
+  return EigenphRecord(unwrap(record.data; kwargs...), record.path, record.meta)
+end
+
+"""
+    unwrap(records :: AbstractVector{<:EigenphRecord}; kwargs...)
+
+Unwraps Eigenphase records.data.δ, wihtout mutating records. Returns unwrapped records
+"""
+function unwrap(records :: AbstractVector{<:EigenphRecord}; kwargs...)
+  return [unwrap(r; kwargs...) for r in records]
+end
+
+"""
+    linterp(E :: AbstractVector, y :: AbstractVector, x :: Real)
 
 Linear interpolation of y(E) at x. If x is out of bounds, use the nearest endpoint.
 """
-function  linterp_at(E :: AbstractVector, y :: AbstractVector, x :: Real)
+function linterp(E :: AbstractVector, y :: AbstractVector, x :: Real)
 
   ne = length(E)
   @assert  length(y) == ne
@@ -80,33 +139,70 @@ function  linterp_at(E :: AbstractVector, y :: AbstractVector, x :: Real)
 
   ie = searchsortedlast(E, x)
   ie = clamp(ie, 1, ne-1)
-  x1, x2 = E[i], E[i+1]
-  y1, y2 = y[i], y[i+1]
+  x1, x2 = E[ie], E[ie+1]
+  y1, y2 = y[ie], y[ie+1]
   t = (x- x1) / (x2 - x1)
 
-  return y1 + t*(y2 = y1)
+  return y1 + t*(y2 - y1)
 
 end
 
-@@@
+"""
+
+
+Shift each selected eigenphase column by adding integer multiples of the period
+so that values at Eref are more or less aligned across records.
+
+Arguments
+- `cols`: `:all` or a vector of column indices
+- `targtype`:
+  - `:minabs` -> choose the record s.t. |δ(Eref) is smallest
+  - `:median` -> chppse the record at median(δ(Eref))
+"""
 function center_records_at!(
     records
-  ; Eref
-  , period=π
-  , cols=:all
-  , choose_targ=:minabs
+  ; Eref     :: Real
+  , period   :: Real =π
+  , cols     :: Union{Symbol,AbstractVector}=:all
+  , targtype :: Symbol=:minabs
   )
+
+  isempty(records) &&  return records
+
+  nδ = size(records[1].data.δ, 2)
+  colidx = cols === :all ? collect(1:nδ) : collect(cols)
+
+  for j in colidx
+
+    # -- find target δ
+    vals = [linterp(r.data.E, @view(r.data.δ[:, j]), Eref) for r in records]
+    if targtype == :minabs
+      targ = vals[argmin(abs.(vals))]
+    elseif targtype == :median
+      s = sort(vals)
+      targ = s[clamp(Int(ceil(length(s)/2)), 1, length(s))]
+    else
+      error("Unknown targtype ($(targtype))")
+    end
+
+    # -- shift by n*period
+    for (r, v) in zip(records, vals)
+      n = round(Int, (targ - v) / period)
+      @views r.data.δ[:, j] .+= n*period
+    end
+
+  end
+
+  return records
+
 end
 
-# # -- centering eigenphase
-# Eref = .01
-# for i=2:size(data[1], 2)
-#   E = data[1][:,1]
-#   ieref = argmin(abs.(E.-Eref))
-#   vals = [data[g][ieref, i] for g in 1:ngeoms]
-#   target = minimum(abs.(vals))
-#   for igeom in 1:ngeoms
-#     n = round(Int, (target - data[igeom][ieref, i]) / period)
-#     data[igeom][:, i] .+= n*period
-#   end
-# end
+"""
+    sum_eigenphases(data :: EigenphData; cols = Union{Symbol, AbstractVector} :: = :all)
+
+Return the sum of selected eigenphase columns
+"""
+function sum_eigenphases(data :: EigenphData; cols = Union{Symbol, AbstractVector} :: :all)
+  return cols ===  :all  ? vec(sum(data.δ; dims=2)) :
+                           vec(sum(@view(data.δ[:, cols]); dims=2))
+end
