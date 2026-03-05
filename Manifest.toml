@@ -2,7 +2,7 @@
 
 julia_version = "1.12.4"
 manifest_format = "2.0"
-project_hash = "6f428bb947d922672e6b16404153a0fe68351131"
+project_hash = "57a6b5ddc1973678f53816ae98b5b6e9cfbf55bc"
 
 [[deps.AliasTables]]
 deps = ["PtrArrays", "Random"]
@@ -96,7 +96,7 @@ uuid = "d38c429a-6771-53c6-b99e-75d170b6e991"
 version = "0.6.3"
 
 [[deps.DDR]]
-deps = ["DelimitedFiles"]
+deps = ["DelimitedFiles", "Plots"]
 path = "."
 uuid = "4a4e836b-f2ec-4376-8d7c-f73f805ca493"
 version = "0.1.0"

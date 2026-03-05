@@ -99,7 +99,7 @@ end
 Unwraps Eigenphase data.δ, without mutating data. Returns data
 """
 function unwrap(data :: EigenphData; kwargs...)
-  return EigenphData(copy(data.E), unwrap_eigenphases(data.E, data.δ; kwargs...), copy(data.name))
+  return EigenphData(copy(data.E), unwrap_eigenphases(data.E, data.δ; kwargs...), copy(data.names))
 end
 
 """
