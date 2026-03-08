@@ -1,5 +1,5 @@
 export EigenphData, EigenphRecord
-export Resonance, ResonRecord
+export Resonance, IndexedResonance
 
 """
     EigenphData
@@ -41,3 +41,10 @@ struct Resonance
   peak :: Float64
   col  :: Int  # data.names[col]
 end
+
+"""
+    IndexedResonance
+
+Just a Resonance with its index
+"""
+const IndexedResonance = Tuple{Int, Resonance}

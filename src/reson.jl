@@ -1,5 +1,5 @@
 using Statistics: median
-export find_resonances, scan_resonances
+export find_resonances, find_resonances_across_records
 ###############
 ### HELPERS ###
 ###############
@@ -12,11 +12,11 @@ export find_resonances, scan_resonances
 end
 
 """
-    dydE(E, y)
+    _dydE(E, y)
 
 Estimates the derivative of y(E) at E
 """
-function dydE(E :: AbstractVector, y :: AbstractVector)
+function _dydE(E :: AbstractVector, y :: AbstractVector)
   ne = length(E)
   @assert length(y) == ne
   ne < 2 && return Float64[]
@@ -157,6 +157,38 @@ function _fwhm(E :: AbstractVector, y :: AbstractVector, ip :: Int)
 
 end
 
+function _auto_Emin_from_yabs(
+    E :: AbstractVector
+  , yabs :: AbstractVector
+  ; tail_frac = 0.5
+  , factor = 5.0
+  , run=12
+  )
+
+  n = length(E)
+  n < 10 && return E[1]
+
+  # -- baseline "noise" level using the tail of the energy range and define a threshold
+  i0= max(1,  Int(floor((1 - tail_frac)*n)))
+  base = median(@view yabs[i0:end])
+  thresh = factor * base
+
+  # -- find the first place that yabs is is below thresh for `run` consecutive values
+  count = 0
+  for i in 1:n
+    if  yabs[i] <= thresh
+      count += 1
+      count >= run && return E[i-run+1]
+    else
+      count=0
+    end
+  end
+
+  # -- never found a stable region ? just don't filter
+  return  E[1]
+
+end
+
 ##############
 ### PUBLIC ###
 ##############
@@ -172,6 +204,9 @@ end
       , min_prominence :: Real = 0.0
       , prominence_window :: Int = 25
       , min_distance :: Union{Real, Nothing} = 0.0
+      , auto_tail_frac = 0.5
+      , auto_factor = 5.0
+      , auto_run = 12
       )
 
 Detect resonances using peaks in |dδ/dE|
@@ -189,6 +224,10 @@ function find_resonances(data :: EigenphData
   , min_prominence :: Real = 0.0
   , prominence_window :: Int = 25
   , min_distance :: Union{Real, Nothing} = nothing
+  # -- parameters for when Emin = :auto
+  , auto_tail_frac = 0.5
+  , auto_factor = 5.0
+  , auto_run = 12
   )
 
   res = Resonance[]
@@ -197,20 +236,44 @@ function find_resonances(data :: EigenphData
   isempty(colidx) && return res
 
   E = data.E
-  ie_range = _range_indices(E; Emin=Emin, Emax=Emax)
+  ie_range0 = _range_indices(E; Emin=(Emin === :auto ? nothing : Emin), Emax=Emax)
 
-  isempty(ie_range) && return res
+  isempty(ie_range0) && return res
 
   for col in colidx
+    ie_range = ie_range0
     δcol = @view data.δ[:, col]
-    dδdE = dydE(E, δcol)
+    dδdE = _dydE(E, δcol)
     dδdE = smoothwin > 1 ? _moving_average(dδdE,  smoothwin) : dδdE
 
-    # -- filter based on energy subinterval
+    # -- initial energy subrange
     Esub = @view E[ie_range]
     yabs = abs.(@view dδdE[ie_range])
 
+    if Emin === :auto
+      Emin_eff = _auto_Emin_from_yabs(
+                  Esub
+                 , yabs
+                 ; tail_frac = auto_tail_frac
+                 , factor = auto_factor
+                 , run = max(auto_run, smoothwin)
+      )
+
+      ie_range = _range_indices(E; Emin=Emin_eff, Emax=Emax)
+      isempty(ie_range) && continue
+
+      Esub = @view E[ie_range]
+      yabs = abs.(@view dδdE[ie_range])
+    end
+
+    # -- get indices of peaks
     peaks = _get_local_maxima_idx(yabs)
+
+    # -- filter out negative derivatives because we should see jumps.
+    #    Very thin or poorly resolved resonances may not get properly unwrapped
+    #    and will have a negative derivative
+    dsub = @view dδdE[ie_range]
+    peaks = [ip for ip in peaks if dsub[ip] > 0]
 
     # -- filter peaks based on threshold + prominence
     peaks = [ip for ip in peaks if yabs[ip] >= min_height
@@ -218,10 +281,14 @@ function find_resonances(data :: EigenphData
 
     # -- minimum energy spacing
     mindist = if min_distance === nothing
-      ΔE = median(diff(Esub))
-      max(8, 2*smoothwin)*ΔE
+      if  length(Esub) < 2
+        0.0
+      else
+        ΔE = median(diff(Esub))
+        max(8, 2*smoothwin)*ΔE
+      end
     else
-      min_distance
+      float(min_distance)
     end
     peaks = _enforce_min_peak_spacing(Esub, peaks, yabs; min_distance=mindist)
 
@@ -242,17 +309,17 @@ function find_resonances(data :: EigenphData
 end
 
 """
-    function scan_resonances(records :: AbstractVector{<:EigenphRecord}; kwargs...)
+    function find_resonances_across_records(records :: AbstractVector{<:EigenphRecord}; kwargs...)
 
 Returns (recid, resonance) pairs where `recid` indexes `records`, so that we know
 where this resonance comes from without duplicating too much data.
 """
-function scan_resonances(records :: AbstractVector{<:EigenphRecord}; kwargs...)
-  hits = Tuple{Int, Resonance}[]
+function find_resonances_across_records(records :: AbstractVector{<:EigenphRecord}; kwargs...)
+  idxres = IndexedResonance[]
   for (recid, r) in pairs(records)
     for res in find_resonances(r.data; kwargs...)
-      push!(hits, (recid,res))
+      push!(idxres, (recid,res))
     end
   end
-  return hits
+  return idxres
 end
