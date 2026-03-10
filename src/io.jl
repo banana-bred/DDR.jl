@@ -8,6 +8,10 @@ export load_eigenph_records
 export geom_index
 export select_cols
 
+###############
+### HELPERS ###
+###############
+
 """
     read_header_tokens(path; comment_char = '#', header_selector = tokens -> true)
 
@@ -44,12 +48,12 @@ function _read_header_tokens(
 end
 
 """
-    names_from_tokens(tokens :: Vector{String}, ncols  :: Int)
+    _names_from_tokens(tokens :: Vector{String}, ncols  :: Int)
 
 ["singlet", "A1", "triplet", "A1"..] -> ["singlet A1", "triplet A1"..]
 ["Q"] -> ["Q"]
 """
-function names_from_tokens(tokens :: AbstractVector{<:AbstractString}, ncols :: Int)
+function _names_from_tokens(tokens :: AbstractVector{<:AbstractString}, ncols :: Int)
   ntokens =  length(tokens)
   if ntokens == ncols
     return tokens
@@ -61,6 +65,10 @@ function names_from_tokens(tokens :: AbstractVector{<:AbstractString}, ncols :: 
   end
   return ["col$(j)" for j in 1:ncols]
 end
+
+##############
+### PUBLIC ###
+##############
 
 """
     read_eigenph_file(path :: AbstractString
@@ -96,7 +104,7 @@ function read_eigenph_file(
     names = ["phase$(iδ)" for iδ in 1:nδ]
   else
     # -- drop the first one
-    names = names_from_tokens(tokens[2:end], nδ)
+    names = _names_from_tokens(tokens[2:end], nδ)
   end
 
   return EigenphData(E, δ, names)
@@ -123,7 +131,7 @@ function  read_geom_file(
   )
   raw = readdlm(path; comments=comments, comment_char=comment_char)
   tokens = _read_header_tokens(path; comment_char=comment_char, header_selector = header_selector)
-  names = tokens === nothing ? ["cols$(iδ)" for iδ in 1:size(raw, 2)] : names_from_tokens(tokens, size(raw, 2))
+  names = tokens === nothing ? ["cols$(iδ)" for iδ in 1:size(raw, 2)] : _names_from_tokens(tokens, size(raw, 2))
   return names, raw
 end
 
@@ -164,7 +172,7 @@ function discover_eigenph_files(
 
   if recursive
 
-    for (dir, _, fnames) in walkdir(root)
+    for (dir, _, fnames) in walkdir(root; follow_symlinks=true)
       for f in fnames
         occursin(fname_regex, f) || continue
         push!(files, joinpath(dir,  f))
@@ -202,18 +210,68 @@ Example for pathMeta: (mode="BEND", spinmult="singlet", irrep="A1")
 """
 function load_eigenph_records(
       root :: AbstractString
-    ; path_meta = (p -> (;))
+    ; geomfile :: Union{Nothing, AbstractString, Symbol} = :auto
+    , path_meta = (p -> (;))
+    , geom_col :: Int = 1
+    , Q_col :: Int = 2
+    , attach_geom ::Bool = true
+    , attach_Q :: Bool = true
     , recursive :: Bool = true
     , fname_regex :: Regex = r"eigenph\.all\.geom\d+$"
     , comments :: Bool = true
   )
 
+  # -- resolve the geometry file
+  gf = geomfile
+  if gf === :auto
+    gf = joinpath(root,  "geometries")
+    gf = isfile(gf) ? gf : nothing
+  end
+  # --- resolve geomfile
+  gf = geomfile
+  if gf === :auto
+    cand = joinpath(root, "geometries")
+    gf = isfile(cand) ? cand : nothing
+  end
 
+  # -- build geom -> map
+  g2Q = nothing
+  if gf !== nothing && attach_Q
+    _, raw = read_geom_file(gf)
+    g2Q = geom_value_map(raw; geom_col=geom_col, val_col=Q_col)
+  end
+
+  # -- discover eigenph files
   paths = discover_eigenph_files(root; recursive = recursive, fname_regex=fname_regex)
   records = Vector{EigenphRecord}(undef, length(paths))
+
   for (i, p) in pairs(paths)
+
     d = read_eigenph_file(p; comments=comments)
-    meta = path_meta(p)
+    base = path_meta(p)
+    base isa NamedTuple || error("path_meta must  return a NamedTuple, got a $(typeof(base))")
+
+    # -- geom index
+    igeom = if hasproperty(base, :geom)
+      getproperty(base, :geom)
+    elseif attach_geom
+      geom_index(p)
+    else
+      missing
+    end
+
+    # -- geom value (Q)
+    q = if hasproperty(base, :Q)
+      getproperty(base, :Q)
+    elseif g2Q === nothing
+      missing
+    elseif igeom isa Integer
+      get(g2Q, igeom, missing)
+    else
+      missing
+    end
+
+    meta = (; base..., geom=igeom, Q=q)
     records[i] = EigenphRecord(d, String(p), meta)
   end
 

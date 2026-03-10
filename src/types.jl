@@ -1,5 +1,6 @@
 export EigenphData, EigenphRecord
 export Resonance, IndexedResonance
+export Table
 
 """
     EigenphData
@@ -40,6 +41,21 @@ struct Resonance
   Γ    :: Union{Float64, Missing}
   peak :: Float64
   col  :: Int  # data.names[col]
+end
+
+"""
+    Table
+
+Minimal table container:
+- header: Vector{String}
+- rows: Matrix{Any}
+- colmap: Dict{String, Int}
+"""
+struct Table
+  @@@
+  header :: Vector{String}
+  rows   :: Matrix{Any}
+  colmap :: Dict{String, Int}
 end
 
 """
