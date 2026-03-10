@@ -1,5 +1,7 @@
 using Statistics: median
 export find_resonances, find_resonances_across_records
+export track_resonance
+
 ###############
 ### HELPERS ###
 ###############
@@ -322,4 +324,118 @@ function find_resonances_across_records(records :: AbstractVector{<:EigenphRecor
     end
   end
   return idxres
+end
+
+"""
+    track_resonance()
+
+Pick ONE resonance per record and try tracking it across Q.
+If `match_width = true`, attempts to enforce continuity in resonance width Γ
+  |Γ - Γref| ≤ width_atol + width_rtol*Γref
+  If no such resonance is found, then the behavior is dictated by `width_strict`:
+  - *false: use energy proximity as a fallback
+  - true: return missing
+If `width_ref` is `nothing`, Γref is just the first width. Otherwise, Γref takes on the value `width_ref`
+"""
+function track_resonance(
+    resbyrec :: AbstractVector{<:AbstractVector{<:Resonance}}
+  , col :: Int
+  ; center :: Real
+  , window :: Real
+  , follow :: Bool = true
+  , follow_window :: Real = window
+  , pick :: Symbol = :closest
+
+  # -- width continuity
+  , match_width :: Bool = true
+  , width_rtol :: Real = 0.75
+  , width_atol :: Real = 0.0
+  , width_strict :: Bool = false
+  , width_ref = nothing
+  )
+
+  nrecords = length(resbyrec)
+  tracked = Vector{Union{Resonance, Missing}}(undef, nrecords)
+
+  col === nothing && error("Must supply `col`")
+
+  Ecur = float(center)
+  Γref = width_ref === nothing ? nothing : float(width_ref)
+
+  Γ_ok(r::Resonance, Γref::Float64) =
+    !ismissing(r.Γ) && abs(r.Γ - Γref) <= (float(width_atol) + float(width_rtol)*Γref)
+
+  foundres = false
+  for i in 1:nrecords
+    win = float((!foundres || !follow) ? window : follow_window)
+
+    # -- energy window
+    candids = Resonance[]
+    for r in resbyrec[i]
+      r.col == col || continue
+      abs(r.E - Ecur) <= win || continue
+      push!(candids, r)
+    end
+
+    if isempty(candids)
+      tracked[i] = missing
+      continue
+    end
+
+    # -- width matching
+    candids2 = candids
+    if match_width && Γref !== nothing
+      Γmatch = [r for r in candids if Γ_ok(r, Γref)]
+      if !isempty(Γmatch)
+        candids2 = Γmatch
+      elseif width_strict
+        tracked[i] = missing
+        continue
+      end
+    end
+
+    chosen =
+      pick === :maxpeak ? candids2[argmax(getfield.(candids2, :peak))] :
+      pick === :closest ? candids2[argmin(abs.(getfield.(candids2, :E) .- Ecur))] :
+      error("`pick` must be :closest or :maxpeak; got $pick")
+
+    tracked[i] = chosen
+    foundres = true
+
+    # -- update tracking center
+    follow && (Ecur = chosen.E)
+
+    # -- set width references if not user-supplied
+    (ismissing(chosen.Γ) || width_ref !== nothing) && continue
+    Γref = float(chosen.Γ)
+
+  end
+
+  return tracked
+
+end
+
+# -- overload for just feeding it all records
+function track_resonance(
+    records :: AbstractVector{<:EigenphRecord}
+  , idxres :: AbstractVector{<:IndexedResonance}
+  ; selector = nothing
+  , col = nothing
+  , kwargs...
+  )
+
+  isempty(records) && error("No records !")
+  data0 = records[1].data
+
+  if col === nothing
+    selector === nothing && error("Must provide `col=` or `selector=` !")
+    cols = resolve_cols(data0; cols=:all, selector=selector)
+    length(cols) == 1 || error("`selector` matched $(length(cols)) != 1 cols: $(data0.names[cols])")
+    col = cols[1]
+  end
+
+  byrec = resonances_by_record(idxres, length(records))
+
+  return track_resonance(byrec, col; kwargs...)
+
 end

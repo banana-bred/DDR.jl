@@ -1,4 +1,5 @@
 using DelimitedFiles: readdlm
+import Printf
 
 # -- procedures
 export read_eigenph_file
@@ -7,6 +8,8 @@ export discover_eigenph_files
 export load_eigenph_records
 export geom_index
 export select_cols
+export render_table
+export show_table, write_table
 
 ###############
 ### HELPERS ###
@@ -277,4 +280,73 @@ function load_eigenph_records(
 
   return records
 
+end
+
+function render_table(
+    io :: IO
+  , t :: Table
+  ; floatfmt :: AbstractString = "%.6g"
+  , missing_str :: AbstractString = "missing"
+  , colsep :: AbstractString = "  "
+  , headersep :: Bool = true
+  , maxrows :: Int = 100
+  , rev :: Bool = false
+  )
+
+  header, rows = t.header, t.rows
+  nrows, ncols = size(rows)
+  nshow = min(nrows, maxrows)
+
+  fmt = Printf.Format(floatfmt)
+  cellfmt(x) = x === missing ? missing_str :
+    x isa AbstractFloat ? Printf.format(fmt, x) :
+    string(x)
+
+  widths = [length(h) for h in header]
+  for i in 1:nshow, j in 1:ncols
+    widths[j] = max(widths[j], length(cellfmt(rows[i,j])))
+  end
+
+  # -- header
+  for j in 1:ncols
+    print(io, lpad(header[j], widths[j]))
+    j < ncols && print(io, colsep)
+  end
+  println(io)
+
+  # -- header/rows separator
+  if headersep
+    for j in 1:ncols
+      print(io, repeat("-", widths[j]))
+      j < ncols && print(io, colsep)
+    end
+    println(io)
+  end
+
+  rowidx = rev ? (nshow:-1:1) : (1:nshow)
+  # -- rows
+  for i in rowidx
+    for j in 1:ncols
+      print(io, lpad(cellfmt(rows[i,j]), widths[j]))
+      j < ncols && print(io, colsep)
+    end
+    println(io)
+  end
+
+  nrows > nshow && println(io, "... $(nrows - nshow) more rows")
+
+  return nothing
+
+end
+
+function show_table(t::Table, io :: IO=stdout; headersep::Bool = true, kwargs...)
+  return render_table(io, t; headersep = headersep, kwargs...)
+end
+Base.show(io :: IO, ::MIME"text/plain", t::Table) = render_table(io, t; maxrows=20)
+
+function write_table(path::AbstractString, t::Table; headersep::Bool = false, kwargs...)
+  open(path, "w") do io
+    render_table(io, t; headersep=headersep, kwargs...)
+  end
+  return path
 end

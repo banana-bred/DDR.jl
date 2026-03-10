@@ -52,7 +52,6 @@ Minimal table container:
 - colmap: Dict{String, Int}
 """
 struct Table
-  @@@
   header :: Vector{String}
   rows   :: Matrix{Any}
   colmap :: Dict{String, Int}

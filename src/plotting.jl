@@ -2,6 +2,7 @@ import Plots
 Plots.gr()
 
 export plot_eigenph, plot_eigenph!
+export plot_resonance, plot_resonance!
 export overlay_resonances!
 
 #################
@@ -62,7 +63,6 @@ function plot_eigenph(
   , res_detect :: NamedTuple = (;) # kwargs forwarded to find_resonances when resonances=:auto
 
   # -- overlay styling
-  , res_tick_width=nothing
   , res_color=:black
   , res_alpha :: Real=0.8
   , res_linewidth=0.8
@@ -97,7 +97,6 @@ function plot_eigenph(
                     ; ytype=ytype
                     , smoothwin=smoothwin
                     , cols_selected=colidx
-                    , res_tick_width=res_tick_width
                     , res_color=res_color
                     , res_alpha=res_alpha
                     , res_linewidth=res_linewidth
@@ -127,7 +126,6 @@ function plot_eigenph(
   , idxres = nothing # nothing | :auto | Vector{IndexedResonance} | Function
   , res_detect :: NamedTuple = (;) # kwargs forwarded to find_resonances when resonances=:auto
   # -- overlay styling
-  , res_tick_width=nothing
   , res_color=:black
   , res_alpha :: Real=0.8
   , res_linewidth=0.8
@@ -183,7 +181,6 @@ function plot_eigenph(
                       , res_alpha=res_alpha
                       , res_linewidth=res_linewidth
                       , res_linestyle=res_linestyle
-                      , res_tick_width=res_tick_width
                       , res_show_center=res_show_center
                       , res_markersize=res_markersize
                       )
@@ -201,7 +198,6 @@ function overlay_resonances!(
   ; ytype ::Symbol = :phase
   , smoothwin :: Int = 1
   , cols_selected = nothing
-  , res_tick_width = nothing
   , res_color = :black
   , res_alpha :: Real = 0.8
   , res_linewidth = 0.8
@@ -209,8 +205,6 @@ function overlay_resonances!(
   , res_show_center :: Bool = false
   , res_markersize :: Real = 3
   )
-
-  tw = res_tick_width === nothing ? 4*median(diff(data.E)) : res_tick_width
 
   for r in resonances
     # -- skip non-selected columns
@@ -223,7 +217,7 @@ function overlay_resonances!(
     # -- plot line at half max for derivatives
     (ytype === :deriv || ytype === :absderiv) && (y0/=2)
 
-    halfwidth = ismissing(r.Γ) ? tw/2 : r.Γ/2
+    halfwidth = ismissing(r.Γ) ? 0.1 : r.Γ/2
     # halfwidth = r.Γ/2
 
     # -- horizonal line indicating resonance width
@@ -253,3 +247,93 @@ end
 
 overlay_resonances!(plt, record :: EigenphRecord, resonances; kwargs...) =
   overlay_resonances!(plt, record.data, resonances; kwargs...)
+
+function plot_resonance!(
+      plt
+    , records
+    , tracked
+    ; key :: Symbol = :Q
+    , order :: Symbol =:asc
+    , connect :: Bool = false
+    , include_width :: Bool =true
+    , skip_missing_key :: Bool =true
+
+    # -- plot aesthetics
+    , xlabel = "Q"
+    , ylabel = "E (eV)"
+    , label = false
+    , width_alpha = 0.5
+    , fill_lw = 0
+
+    , kwargs...
+    )
+
+    nrecords = length(records)
+    nrecords == length(tracked) ||
+      error("Number of records ($(nrecords)) does not match the number of records in `tracked`: $(length(tracked))")
+
+    keyvals = Float64[]
+    Evals = Float64[]
+    Γvals = Float64[]
+    recids = Int[]
+
+    for recid in eachindex(records)
+      r = tracked[recid]
+      ismissing(r) && continue
+
+      v = meta(records[recid], key; default=missing)
+      if ismissing(v)
+        skip_missing_key && continue
+        push!(keyvals, NaN)
+      else
+        push!(keyvals, float(v))
+      end
+
+      push!(Evals, r.E)
+      push!(Γvals, ismissing(r.Γ) ? 0.0 : float(r.Γ))
+      push!(recids, recid)
+    end
+
+    isempty(keyvals) && error("No tracked points to plot !")
+
+    # -- sort by key
+    order === :asc || order === :dsc || error("`order` must be :asc or :dsc")
+    perm    = sortperm(1:length(keyvals), by = i -> keyvals[i], rev = order === :dsc)
+    keyvals = keyvals[perm]
+    Evals   = Evals[perm]
+    Γvals   = Γvals[perm]
+    recids  = recids[perm]
+
+    halfwidth = 0.5 .* Γvals
+
+    if connect
+      Plots.plot!(plt, keyvals, Evals; xlabel = xlabel, ylabel = ylabel, label = label, kwargs...)
+      if include_width
+        Elo = Evals .- halfwidth
+        Ehi = Evals .+ halfwidth
+        lc = plt.series_list[end].plotattributes[:seriescolor]
+        Plots.plot!(
+            plt, keyvals, Elo
+          ; fillrange = Ehi
+          , fillcolor = lc
+          , linecolor = lc
+          , fillalpha = width_alpha
+          , linewidth = fill_lw
+          , label = false
+        )
+      end
+    else
+      Plots.scatter!(plt, keyvals, Evals
+        ; yerror = include_width ? halfwidth : nothing
+        , xlabel = xlabel, ylabel = ylabel, label = label, kwargs...
+      )
+    end
+
+    return plt
+
+end
+
+function plot_resonance(records, tracked; kwargs...)
+  plt = Plots.plot()
+  return plot_resonance!(plt, records, tracked; kwargs...)
+end

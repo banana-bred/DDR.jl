@@ -1,8 +1,7 @@
 import DelimitedFiles
-export show_table
-export write_table
 export resonance_table_wide
 export resonance_table_long
+export maketable, nrows, ncols, colindex
 
 ################
 #### HELPERS ###
@@ -16,17 +15,28 @@ end
 #### PUBLIC ###
 ###############
 
-# -- show a table
-function show_table(header, rows; maxrows=30)
-    n = min(size(rows,1), maxrows)
-    println(join(header, "  |  "))
-    println("-"^min(120, 6*length(header)+40))
-    for i in 1:n
-        println(join(string.(rows[i, :]), "  |  "))
-    end
-    if size(rows,1) > n
-        println("... $(size(rows,1)-n) more")
-    end
+"""
+    maketable(header, rows)
+
+Makes header and rows into a Table
+"""
+function maketable(header :: Vector{String}, rows :: AbstractMatrix{Any})
+  size(rows, 2) == length(header) ||
+    error("Row dimension ($(size(rows, 2))) and header dimension ($(length(header))) do not match !")
+  colmap = Dict{String, Int}(h => i for (i,h) in pairs(header))
+  return Table(copy(header), Matrix{Any}(rows), colmap)
+end
+nrows(t::Table) = size(t.rows, 1)
+ncols(t::Table) = size(t.rows, 2)
+colindex(t::Table, name::AbstractString) =
+  get(t.colmap, String(name), error("Could not find column '$name'"))
+# -- easy indexing
+Base.getindex(t::Table, i::Int, j::Int) = t.rows[i,j]
+Base.getindex(t::Table, i::Int, name::AbstractString) = t.rows[i, colindex(t, name)]
+# -- grab a whole column by its name
+function Base.getindex(t::Table, ::Colon, name::AbstractString)
+  j = colindex(t, name)
+  return  t.rows[:, j]
 end
 
 """
@@ -38,63 +48,38 @@ Build a wide table:
 - columns = key (+ optional geom) + for each spec: E Γ
 
 `specs` is a vector of NamedTuples, e.g.,
-  (label="BEND", selector="singlet A1", center=0.5, window=0.05, pick=:maxpeak, follow=true)
+  (label="BEND", selector="singlet A1", center=0.5, window=0.05, pick=:energy, follow=true, tracked=tracked)
   `cols` can be used instead of `selector`
 
-Returns (header :: Vector{String}, rows :: Matrix{Any})
+Returns a Table
 """
 function resonance_table_wide(
     records :: AbstractVector{<:EigenphRecord}
-  , idxres :: AbstractVector{<:IndexedResonance}
+  , specs
   ; key :: Symbol = :Q
   , sortby :: Symbol = key
   , order :: Symbol = :asc
-  , specs
   , include_geom :: Bool = true
   , include_peak :: Bool = false
+  , do_sort :: Bool = true
+  , kwargs...
   )
 
   isempty(records) && error("No records to table !")
   nrecords = length(records)
-  data0 = records[1].data
-
-  # -- group resonances together
-  byrec = resonances_by_record(idxres, length(records))
-
-  # -- record ordering
-  keyvals = [meta(r, sortby) for r in records]
-  ord = sortperm(1:nrecords, by = i ->( ismissing(keyvals[i]), keyvals[i] ), rev = (order === :desc))
 
   # -- resolve spec -> (label, col, tracked vector)
   resolved = Vector{NamedTuple}(undef, length(specs))
   for (k, spec) in pairs(specs)
+
     label = get(spec, :label, "res $k")
+    tr = get(spec, :tracked, nothing)
+    tr === nothing && error("Spec '$label' must provide `tracked=` (Vector{Union{Resonance, Missing}})")
 
-    col =
-      haskey(spec, :col) ? spec.col :
-        haskey(spec, :selector) ? begin
-          cols = resolve_cols(data0; cols=:all, selector=spec.selector)
-          length(cols) == 1 || error("Spec '$label' selector must match exactly 1 column; got $(length(cols))")
-          cols[1]
-        end :
-        error("Spec '$label' needs :col or :selector")
+    length(tr) == nrecords || error("Spec '$label' has $(length(tr)) records, but $nrecords are expected")
 
-    center = haskey(spec, :center) ? spec.center : error("$Spec '$label' needs :center")
-    window = haskey(spec, :window) ? spec.window : error("$Spec '$label' needs :window")
-    follow = haskey(spec, :follow) ? spec.follow : true
-    follow_window = haskey(spec, :follow_window) ? spec.follow_window : window
-    pick = haskey(spec, :pick) ? spec.pick : :closest
+    resolved[k] = (; label, tr)
 
-    tr = track_resonance( records
-                        , byrec
-                        ; col=col
-                        , center=center
-                        , window=window
-                        , follow=follow
-                        , follow_window=follow_window
-                        , pick=pick
-    )
-    resolved[k] = (; label,col, tr)
   end
 
   # -- header
@@ -107,6 +92,19 @@ function resonance_table_wide(
     include_peak && push!(header, "$(spec.label)_peak")
   end
 
+  # -- record ordering
+  ord = collect(1:nrecords)
+  if do_sort
+    (order === :asc || order === :dsc) || error("`order` must be :asc or :dsc")
+    sgn = (order === :dsc) ? -1.0 : 1.0
+    ord = sortperm(1:nrecords, by = i ->
+      begin
+        v = meta(records[i], sortby; default=missing)
+        vkey = ismissing(v) ? Inf : sgn * Float64(v)
+        (ismissing(v), vkey)
+      end)
+  end
+
   # -- rows
   nrows = length(records)
   ncols = length(header)
@@ -116,32 +114,26 @@ function resonance_table_wide(
     rec = records[recid]
     c = 1
 
-    rows[irow,  c] = meta(rec, key) ; c += 1
+    c = putcell!(rows, irow, c, meta(rec, key))
 
-    if include_geom
-      rows[irow, c] = meta(rec, :geom) ; c += 1
-    end
+    include_geom && (c = putcell!(rows, irow, c, meta(rec, :geom)))
 
     for spec in resolved
       rsel = spec.tr[recid]
       if ismissing(rsel)
-        rows[irow, c] = missing ; c += 1
-        rows[irow, c] = missing ; c += 1
-        if include_peak
-          rows[irow, c] = missing ; c += 1
-        end
+        c = putcell!(rows, irow, c, missing)
+        c = putcell!(rows, irow, c, missing)
+        include_peak && (c = putcell!(rows, irow, c, missing))
       else
-        rows[irow, c] = rsel.E ; c += 1
-        rows[irow, c] = rsel.Γ ; c += 1
-        if include_peak
-          rows[irow, c] = rsel.peak ; c += 1
-        end
+        c = putcell!(rows, irow, c, rsel.E)
+        c = putcell!(rows, irow, c, rsel.Γ)
+        include_peak && (c = putcell!(rows, irow, c, rsel.peak))
       end
     end
 
   end
 
-  return header, rows
+  return maketable(header, rows)
 
 end
 
@@ -220,25 +212,6 @@ function resonance_table_long(
         rows = rows[perm, :]
     end
 
-  return header, rows
+  return maketable(header, rows)
 
-end
-
-"""
-    write_table(path, header, rows; delim=',')
-
-Writes a header row + `rows` (matrix | vector of vectors) to disk.
-Returns `path`.
-"""
-function write_table(
-    path  :: AbstractString
-  , header :: Vector{String}
-  , rows
-  ; delim=','
-  )
-  open(path, "w") do io
-    DelimitedFiles.writedlm(io, permutedims(header), delim)
-    DelimitedFiles.writedlm(io, rows, delim)
-  end
-  return path
 end

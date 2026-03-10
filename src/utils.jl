@@ -15,7 +15,7 @@ export meta
 
 Helper forgetting metadata, also useful as an export
 """
-meta(rec :: EigenphRecord, key :: Symbol; default = missing) = hasproperty(rec, key) ? getproperty(rec.meta, key) : default
+meta(rec :: EigenphRecord, key :: Symbol; default = missing) = hasproperty(rec.meta, key) ? getproperty(rec.meta, key) : default
 
 """
     _yseries(data,  col; ytype, smoothwin)
