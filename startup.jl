@@ -26,7 +26,7 @@ selector = r"(singlet A1)"
 idxres = DDR.find_resonances_across_records(records;
     selector=selector,
     Emin=0.05,
-    smoothwin=5,
+    smoothwin=1,
     min_height=40,
 )
 
@@ -43,7 +43,7 @@ display(plt_phase)
 plt_deriv = DDR.plot_eigenph(records
     ; selector=selector
     , ytype=:deriv
-    , smoothwin=5
+    , smoothwin=1
     , idxres=idxres
     , show=true
     , xlims=(0.05, :auto)
@@ -67,7 +67,7 @@ selector = "singlet A1"
 idxres_BEND_1A1 = DDR.find_resonances_across_records(records;
     selector=selector,
     Emin=0.05,
-    smoothwin=5,
+    smoothwin=1,
     min_height=40,
     min_prominence=0.5,
 )
@@ -88,7 +88,7 @@ selector="triplet B2"
 idxres_BEND_3B2 = DDR.find_resonances_across_records(records;
     selector=selector,
     Emin=0.05,
-    smoothwin=5,
+    smoothwin=1,
     min_height=40,
     min_prominence=0.5,
 )
