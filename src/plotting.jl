@@ -1,5 +1,4 @@
 import Plots
-Plots.gr()
 
 export plot_eigenph, plot_eigenph!
 export plot_resonance, plot_resonance!
@@ -20,28 +19,34 @@ function _default_record_label(record :: EigenphRecord)
   return g === nothing  ? splitpath(record.path)[end] : "geom = $(g)"
 end
 
-
 ################
 #### PUBLIC ####
 ################
 
-function plot_eigenph!(plt, data :: EigenphData
+function plot_eigenph!(
+    plt
+  , data :: EigenphData
   ; cols=:all
   , selector=nothing
   , ytype :: Symbol = :phase
   , smoothwin :: Int = 1
   , label = :name
+  , unitsE :: Symbol = :eV
   , kwargs...
   )
   colidx = resolve_cols(data; cols=cols, selector=selector)
   isempty(colidx) && error("No columns selected")
+  Evals = unitsE === :au ? data.E :
+          unitsE === :eV ? _convertE.(data.E, :au, :eV) :
+          error("`unitsE` must be either :au or :eV")
   for c in colidx
     ys = _yseries(data, c; ytype=ytype, smoothwin=smoothwin)
     lbl = label isa Function ? label(data, c) :
       label === :name ? data.names[c] :
         label === false || label === :none || label === nothing ? false :
         string(label)
-    Plots.plot!(plt, data.E,ys; label=lbl, kwargs...)
+    (ytype === :deriv || ytype === :absderiv) && (ys = _convertInvE.(ys, :au, unitsE))
+    Plots.plot!(plt, Evals, ys; label=lbl, kwargs...)
   end
   return plt
 end
@@ -53,10 +58,11 @@ function plot_eigenph(
   , ytype :: Symbol = :phase
   , smoothwin :: Int = 1
   , label=:name
+  , unitsE :: Symbol = :eV
 
   # -- general plot stuff
   , ylabel = nothing
-  , xlabel = "E (eV)"
+  , xlabel = "E"
 
   # -- resonance overlay control
   , resonances=nothing  # nothing | :auto | Vector{<:Resonance}
@@ -78,7 +84,7 @@ function plot_eigenph(
   isempty(colidx) && error("No columns selected !")
 
   ylbl = ylabel === nothing ? _default_ylabel(ytype) : ylabel
-  plt = Plots.plot(; ylabel=ylbl)
+  plt = Plots.plot(; ylabel=ylbl, xlabel=xlabel)
 
   plot_eigenph!( plt
                , data
@@ -87,6 +93,7 @@ function plot_eigenph(
                , ytype=ytype
                , smoothwin=smoothwin
                , label=label
+               , unitsE = unitsE
                , kwargs...
   )
 
@@ -96,6 +103,7 @@ function plot_eigenph(
   overlay_resonances!(plt, data, reslist
                     ; ytype=ytype
                     , smoothwin=smoothwin
+                    , unitsE = unitsE
                     , cols_selected=colidx
                     , res_color=res_color
                     , res_alpha=res_alpha
@@ -113,14 +121,16 @@ plot_eigenph!(plt, rec :: EigenphRecord; kwargs...) = plot_eigenph!(plt, rec.dat
 plot_eigenph(rec :: EigenphRecord; kwargs...) = plot_eigenph(rec.data; kwargs...)
 
 # -- multiple records
-function plot_eigenph(
-    records :: AbstractVector{<:EigenphRecord}
+function plot_eigenph!(
+    plt
+  , records :: AbstractVector{<:EigenphRecord}
   ; cols=:all
   , selector = nothing
   , ytype :: Symbol= :phase
   , smoothwin :: Int = 1
   , ylabel = nothing
-  , xlabel = "E (eV)"
+  , xlabel = "E"
+  , unitsE :: Symbol = :eV
   , record_label=_default_record_label
   # -- resonance overlay control
   , idxres = nothing # nothing | :auto | Vector{IndexedResonance} | Function
@@ -155,7 +165,6 @@ function plot_eigenph(
   res_by_rec = _idxres === nothing ? nothing : resonances_by_record(_idxres, length(records))
 
   ylbl = ylabel === nothing ? _default_ylabel(ytype) : ylabel
-  plt = Plots.plot(; ylabel=ylbl)
 
   # -- loop over the records
   for (recid, r) in pairs(records)
@@ -166,7 +175,10 @@ function plot_eigenph(
                  ; cols=colidx0
                  , selector=nothing
                  , ytype=ytype
+                 , ylabel = ylbl
+                 , xlabel = xlabel
                  , smoothwin=smoothwin
+                 , unitsE = unitsE
                  , label=(data,col) -> pfx * data.names[col]
                  , kwargs...)
 
@@ -177,6 +189,7 @@ function plot_eigenph(
                       ; ytype = ytype
                       , smoothwin=smoothwin
                       , cols_selected=colidx0
+                      , unitsE = unitsE
                       , res_color=res_color
                       , res_alpha=res_alpha
                       , res_linewidth=res_linewidth
@@ -189,6 +202,10 @@ function plot_eigenph(
   return plt
 
 end
+function plot_eigenph(records :: AbstractVector{<:EigenphRecord}; kwargs...)
+  plt = Plots.plot()
+  return plot_eigenph!(plt, records;  kwargs...)
+end
 
 # -- overlaying resonances on eigenph data
 function overlay_resonances!(
@@ -197,6 +214,7 @@ function overlay_resonances!(
   , resonances :: AbstractVector{<:Resonance}
   ; ytype ::Symbol = :phase
   , smoothwin :: Int = 1
+  , unitsE :: Symbol = :eV
   , cols_selected = nothing
   , res_color = :black
   , res_alpha :: Real = 0.8
@@ -206,22 +224,28 @@ function overlay_resonances!(
   , res_markersize :: Real = 3
   )
 
+  xplot = unitsE === :au ? data.E :
+          unitsE === :eV ? _convertE.(data.E, :au, :eV) :
+          error("`unitsE` must be either :au or :eV")
+
   for r in resonances
     # -- skip non-selected columns
     (cols_selected !== nothing && !(r.col in cols_selected)) && continue
 
     # -- get peak position
     ys = _yseries(data, r.col; ytype=ytype, smoothwin=smoothwin)
-    y0 = linterp(data.E, ys, r.E)
+    (ytype === :deriv || ytype === :absderiv) && (ys = _convertInvE.(ys, :au, unitsE))
+    E0 = unitsE === :au ? r.E : _convertE(r.E, :au, :eV)
+    y0 = linterp(xplot, ys, E0)
 
     # -- plot line at half max for derivatives
     (ytype === :deriv || ytype === :absderiv) && (y0/=2)
 
-    halfwidth = ismissing(r.Γ) ? 0.1 : r.Γ/2
-    # halfwidth = r.Γ/2
+    halfwidth = ismissing(r.Γ) ? (unitsE === :eV ? 0.1 : 0.1 / AU2EV) :
+                                 (unitsE === :au ? r.Γ/2 : _convertE(r.Γ/2, :au, :eV))
 
     # -- horizonal line indicating resonance width
-    Plots.plot!( plt, [r.E - halfwidth, r.E + halfwidth], [y0, y0]
+    Plots.plot!( plt, [E0 - halfwidth, E0 + halfwidth], [y0, y0]
                ; label=false
                , color=res_color
                , alpha=res_alpha
@@ -232,7 +256,7 @@ function overlay_resonances!(
     res_show_center || continue
 
     # -- single marker indicating resonance position
-    Plots.scatter!( plt, [r.E], [y0]
+    Plots.scatter!( plt, [E0], [y0]
                 ; label = false
                 , color=res_color
                 , alpha=res_alpha
@@ -257,13 +281,21 @@ function plot_resonance!(
     , connect :: Bool = false
     , include_width :: Bool =true
     , skip_missing_key :: Bool =true
+    , unitsE :: Symbol = :eV # :eV or :au (Hartree)
 
     # -- plot aesthetics
     , xlabel = "Q"
-    , ylabel = "E (eV)"
+    , ylabel = nothing
     , label = false
     , width_alpha = 0.5
     , fill_lw = 0
+
+    # -- for adding resonance enrgies to a target state
+    , targstate :: Union{Nothing, TargetState} = nothing
+    , target_ref :: Symbol = :min # :min or :Q0 or :none
+    , target_lw = 2
+    , target_ls = :solid
+    , target_label = true
 
     , kwargs...
     )
@@ -298,19 +330,47 @@ function plot_resonance!(
 
     # -- sort by key
     order === :asc || order === :dsc || error("`order` must be :asc or :dsc")
-    perm    = sortperm(1:length(keyvals), by = i -> keyvals[i], rev = order === :dsc)
-    keyvals = keyvals[perm]
-    Evals   = Evals[perm]
-    Γvals   = Γvals[perm]
-    recids  = recids[perm]
+    idx    = sortperm(1:length(keyvals), by = i -> keyvals[i], rev = order === :dsc)
+    keyvals = keyvals[idx]
+    Evals   = Evals[idx]
+    Γvals   = Γvals[idx]
+    recids  = recids[idx]
 
-    halfwidth = 0.5 .* Γvals
+    # -- unit conversions, build plotting values
+    halfwidth = _convertE.(0.5 .* Γvals, :au, unitsE)
+    Eplot     = _convertE.(Evals, :au, unitsE)
+    Γplot     = _convertE.(Γvals, :au, unitsE)
 
+    # -- add a target state to this plot and shift resonances accordingly ?
+    QV, VQ = nothing, nothing
+    if targstate isa TargetState
+      VQ = copy(targstate.V)
+      target_ref === :min && VQ .-= minimum(VQ)
+      VQ = _convertE.(VQ, :au, unitsE)
+      QV = targstate.Q
+      Eplot .+= [linterp(QV, VQ, q) for q in keyvals]
+      targlabel = target_label === true ? targstate.name :
+                  target_label === false ? false : string(target_label)
+      Plots.plot!(plt, QV, VQ; label = targlabel, linestyle = target_ls, linewidth = target_lw)
+    elseif targstate !== nothing
+      error("targstate kwarg must be a TargetState or nothing")
+    end
+
+    # -- ylabel reflects units
+    if ylabel === nothing
+      ylabel = if unitsE === :eV
+        "energy (eV)"
+      else
+        "energy (Hartree)"
+      end
+    end
+
+    # -- connect the dots ?
     if connect
-      Plots.plot!(plt, keyvals, Evals; xlabel = xlabel, ylabel = ylabel, label = label, kwargs...)
+      Plots.plot!(plt, keyvals, Eplot; xlabel = xlabel, ylabel = ylabel, label = label, kwargs...)
       if include_width
-        Elo = Evals .- halfwidth
-        Ehi = Evals .+ halfwidth
+        Elo = Eplot .- halfwidth
+        Ehi = Eplot .+ halfwidth
         lc = plt.series_list[end].plotattributes[:seriescolor]
         Plots.plot!(
             plt, keyvals, Elo
@@ -323,7 +383,7 @@ function plot_resonance!(
         )
       end
     else
-      Plots.scatter!(plt, keyvals, Evals
+      Plots.scatter!(plt, keyvals, Eplot
         ; yerror = include_width ? halfwidth : nothing
         , xlabel = xlabel, ylabel = ylabel, label = label, kwargs...
       )
@@ -336,4 +396,29 @@ end
 function plot_resonance(records, tracked; kwargs...)
   plt = Plots.plot()
   return plot_resonance!(plt, records, tracked; kwargs...)
+end
+
+function plot_resonance(
+      mode :: NormalMode
+    , tracked
+    ; targstate :: Union{TargetState, Symbol} = :auto
+    , Q0 :: Real=0.0
+    , kwargs...
+  )
+  plt = Plots.plot()
+  return plot_resonance!(plt, mode.records, tracked; targstate=targstate, kwargs...)
+end
+
+function plot_resonance!(
+      plt
+    , mode :: NormalMode
+    , tracked
+    ; targstate :: Union{TargetState, Symbol} = :auto
+    , Q0 :: Real = 0.0
+    , kwargs...
+  )
+  targ = targstate === :auto ? ground_state(mode.root; Q0=Q0) :
+         targstate isa TargetState ? targstate :
+         nothing
+  return plot_resonance!(plt, mode.records, tracked; target=targ, kwargs...)
 end

@@ -1,4 +1,8 @@
 data
 *.dat
 *.tab
-*.csv
+**/*.csv
+*.ipynb
+python
+TODO
+**/*.tsv

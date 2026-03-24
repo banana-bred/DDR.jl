@@ -2,6 +2,7 @@ import DelimitedFiles
 export resonance_table_wide
 export resonance_table_long
 export maketable, nrows, ncols, colindex
+export widetable_to_longtable
 
 ################
 #### HELPERS ###
@@ -37,104 +38,6 @@ Base.getindex(t::Table, i::Int, name::AbstractString) = t.rows[i, colindex(t, na
 function Base.getindex(t::Table, ::Colon, name::AbstractString)
   j = colindex(t, name)
   return  t.rows[:, j]
-end
-
-"""
-    resonance_table_wide(records idxres; key=:Q, sortby=key, order=:asc
-      , specs, include_geom=true)
-
-Build a wide table:
-- row = one record (geometry, Q..)
-- columns = key (+ optional geom) + for each spec: E Γ
-
-`specs` is a vector of NamedTuples, e.g.,
-  (label="BEND", selector="singlet A1", center=0.5, window=0.05, pick=:energy, follow=true, tracked=tracked)
-  `cols` can be used instead of `selector`
-
-Returns a Table
-"""
-function resonance_table_wide(
-    records :: AbstractVector{<:EigenphRecord}
-  , specs
-  ; key :: Symbol = :Q
-  , sortby :: Symbol = key
-  , order :: Symbol = :asc
-  , include_geom :: Bool = true
-  , include_peak :: Bool = false
-  , do_sort :: Bool = true
-  , kwargs...
-  )
-
-  isempty(records) && error("No records to table !")
-  nrecords = length(records)
-
-  # -- resolve spec -> (label, col, tracked vector)
-  resolved = Vector{NamedTuple}(undef, length(specs))
-  for (k, spec) in pairs(specs)
-
-    label = get(spec, :label, "res $k")
-    tr = get(spec, :tracked, nothing)
-    tr === nothing && error("Spec '$label' must provide `tracked=` (Vector{Union{Resonance, Missing}})")
-
-    length(tr) == nrecords || error("Spec '$label' has $(length(tr)) records, but $nrecords are expected")
-
-    resolved[k] = (; label, tr)
-
-  end
-
-  # -- header
-  header = String[]
-  push!(header, string(key))
-  include_geom && push!(header, "geom")
-  for spec in resolved
-    push!(header, "$(spec.label)_E")
-    push!(header, "$(spec.label)_Γ")
-    include_peak && push!(header, "$(spec.label)_peak")
-  end
-
-  # -- record ordering
-  ord = collect(1:nrecords)
-  if do_sort
-    (order === :asc || order === :dsc) || error("`order` must be :asc or :dsc")
-    sgn = (order === :dsc) ? -1.0 : 1.0
-    ord = sortperm(1:nrecords, by = i ->
-      begin
-        v = meta(records[i], sortby; default=missing)
-        vkey = ismissing(v) ? Inf : sgn * Float64(v)
-        (ismissing(v), vkey)
-      end)
-  end
-
-  # -- rows
-  nrows = length(records)
-  ncols = length(header)
-  rows = Array{Any}(undef, nrows, ncols)
-
-  for (irow, recid) in pairs(ord)
-    rec = records[recid]
-    c = 1
-
-    c = putcell!(rows, irow, c, meta(rec, key))
-
-    include_geom && (c = putcell!(rows, irow, c, meta(rec, :geom)))
-
-    for spec in resolved
-      rsel = spec.tr[recid]
-      if ismissing(rsel)
-        c = putcell!(rows, irow, c, missing)
-        c = putcell!(rows, irow, c, missing)
-        include_peak && (c = putcell!(rows, irow, c, missing))
-      else
-        c = putcell!(rows, irow, c, rsel.E)
-        c = putcell!(rows, irow, c, rsel.Γ)
-        include_peak && (c = putcell!(rows, irow, c, rsel.peak))
-      end
-    end
-
-  end
-
-  return maketable(header, rows)
-
 end
 
 function resonance_table_long(
@@ -197,7 +100,7 @@ function resonance_table_long(
 
         sgn = (order === :dsc) ? -1.0 : 1.0  # keep missing last while sorting descending
 
-        perm = sortperm(1:nrows, by = i -> begin
+        idx = sortperm(1:nrows, by = i -> begin
             q = rows[i, col_key]
             e = rows[i, col_E]
             cc = rows[i, col_col]
@@ -209,8 +112,187 @@ function resonance_table_long(
             (ismissing(q), qkey, ekey, cc, recid)
         end)
 
-        rows = rows[perm, :]
+        rows = rows[idx, :]
     end
+
+  return maketable(header, rows)
+
+end
+
+"""
+    _homogenize_key(x; digits=4)
+
+Homogenize floating keys (e.g., Q=0.5) for joining them across modes by rounding.
+"""
+@inline _homogenize_key(x :: Real; digits :: Int=4) = round(Float64(x), digits=digits)
+
+"""
+    resonance_table_wide(specs; key=:Q, order=:asc, qdigits=4, include_peak=falsr)
+
+Build a wide table:
+- row = one record (geometry, Q..)
+- columns = key (+ optional geom) + for each spec: E Γ
+
+`specs` is a vector of NamedTuples, e.g.,
+  (label="BEND", records = recs, selector="singlet A1", center=0.5, window=0.05, pick=:energy, follow=true, tracked=tracked)
+  `cols` can be used instead of `selector`
+
+Returns a Table
+"""
+function resonance_table_wide(
+    specs
+  ; key :: Symbol = :Q
+  , order :: Symbol = :asc
+  , qdigits :: Int = 4
+  , include_peak :: Bool = false
+  )
+
+  isempty(specs) && error("No specs provided for widetable !")
+  order === :asc || order === :dsc || error("`order` must be :asc or :dsc")
+
+  # -- homogenize
+  resolved_specs = Vector{NamedTuple}(undef, length(specs))
+  allkeys = Float64[]
+
+  for (k, spec) in pairs(specs)
+    label = String(get(spec, :label, "res$k"))
+    records = get(spec, :records, nothing)
+    tracked = get(spec, :tracked, nothing)
+
+    records === nothing && error("Spec `$label` must provide `records=`")
+    tracked === nothing && error("Spec `$label` must provide `tracked=`")
+
+    length(records) == length(tracked) ||
+      error("Spec '$label': length(records)=$(length(records)) must be the same as
+        length(tracked)=$(length(tracked))")
+
+    # -- collect all available keys for global row id
+    for rec in records
+      v = meta(rec, key; default = missing)
+      ismissing(v) && continue
+      push!(allkeys, _homogenize_key(v; digits=qdigits))
+    end
+
+    resolved_specs[k] = (; label, records, tracked)
+  end
+
+  isempty(allkeys) && error("Non non-missing values found for key=$key across specs !")
+
+  # -- global grid of joined keys
+  joined_keys = sort(unique(allkeys))
+  order === :dsc && reverse!(joined_keys)
+
+  # -- header
+  header = String[string(key)]
+  for spec in resolved_specs
+    push!(header, "$(spec.label)_E")
+    push!(header, "$(spec.label)_Γ")
+    include_peak && push!(header, "$(spec.label)_peak")
+  end
+
+  # -- build per-spec maps: (rounded) key -> tracked resonacne OR missing
+  maps = Vector{Dict{Float64, Union{Missing, Resonance}}}(undef, length(resolved_specs))
+  for (k, spec) in pairs(resolved_specs)
+    d = Dict{Float64, Union{Missing, Resonance}}()
+
+    for (rec, tr) in zip(spec.records, spec.tracked)
+      v = meta(rec, key; default=missing)
+      ismissing(v) && continue
+
+      qk = _homogenize_key(v; digits=qdigits)
+
+      # -- make sure that we don't collapse duplicate rounded keys within a spec
+      haskey(d, qk) && error(
+        "Spec `$(spec.label)` has duplicate rounded $(key)=$(qk). " *
+        "Incrase `qdigits` or take a closer look at the grids."
+      )
+
+      d[qk] = tr
+    end
+
+    maps[k] = d
+
+  end
+
+  # -- rows
+  nrows = length(joined_keys)
+  ncols = length(header)
+  rows = Array{Any}(undef, nrows, ncols)
+
+  for (irow, qk) in pairs(joined_keys)
+    c = 1
+    c = putcell!(rows, irow, c, qk)
+    for (k, spec) in pairs(resolved_specs)
+      tr = get(maps[k], qk, missing)
+
+      if ismissing(tr)
+        c = putcell!(rows, irow, c, missing)
+        c = putcell!(rows, irow, c, missing)
+        include_peak && (c = putcell!(rows, irow, c, missing))
+        continue
+      end
+
+      c = putcell!(rows, irow, c, tr.E)
+      c = putcell!(rows, irow, c, tr.Γ)
+      include_peak && (c = putcell!(rows, irow, c, tr.peak))
+
+    end
+  end
+
+  return maketable(header, rows)
+
+end
+
+"""
+    widetable_to_longtabled(widetable, spec; drop_missing=true)
+
+Converts a wide resonance table to a long resonance table that is more adapted to a dissociation
+calcualation
+"""
+function widetable_to_longtable(
+    widetable :: Table
+  , spec :: DissCalcSpec
+  ; drop_missing :: Bool = true
+  )
+
+  validate_calc_spec(widetable, spec) # from dissoc
+
+  Qidx = _require_col(widetable, spec.qcol)
+
+  header = String[spec.qcol, "channel", "mode", "label", "Eres", "Γ"]
+  rowsv = Vector{NTuple{6, Any}}()
+
+  for ch in spec.channels
+    for cm in ch.modes
+      Eidx = _require_col(widetable, "$(cm.label)_E")
+      Γidx = _require_col(widetable, "$(cm.label)_Γ")
+
+      for i in axes(widetable.rows, 1)
+        Q = widetable.rows[i, Qidx]
+        E = widetable.rows[i, Eidx]
+        Γ = widetable.rows[i, Γidx]
+
+        drop_missing && (ismissing(Q) || ismissing(E) || ismissing(Γ)) && continue
+
+        push!(rowsv, (Q, ch.name, cm.mode_name, cm.label, E, Γ))
+      end
+    end
+  end
+
+  # -- sort by (channel, mode, Q, label)
+  idx = sortperm(1:length(rowsv), by = k -> begin
+    Q, ch, mode, lbl, E, Γ = rowsv[k]
+    Qkey = ismissing(Q) ? Inf : Float64(Q)
+    (String(ch), String(mode), Qkey, String(lbl))
+  end)
+
+  rows = Matrix{Any}(undef, length(rowsv), length(header))
+  for (i_out, k_in) in enumerate(idx)
+    tpl = rowsv[k_in]
+    for j in 1:length(header)
+      rows[i_out, j] = tpl[j]
+    end
+  end
 
   return maketable(header, rows)
 

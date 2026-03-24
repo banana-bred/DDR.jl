@@ -4,8 +4,10 @@ import Printf
 # -- procedures
 export read_eigenph_file
 export read_geom_file
+export read_target_energies_file
 export discover_eigenph_files
 export load_eigenph_records
+export load_target_for_mode
 export geom_index
 export select_cols
 export render_table
@@ -78,6 +80,7 @@ end
       ; comments :: Bool = true
       , comment_char :: Char = '#'
       , header_selector = t -> lowercase(t[1]) == "energy"
+      , unitsE = :eV
     )
 
 Returns the energies E and eigenphases δ from the tabular data at path
@@ -87,6 +90,7 @@ function read_eigenph_file(
   ; comments :: Bool = true
   , comment_char :: Char= '#'
   , header_selector = t -> lowercase(t[1]) == "energy"
+  , unitsE :: Symbol = :eV
   )
 
   raw = readdlm(path, comments = comments, comment_char = comment_char)
@@ -94,7 +98,14 @@ function read_eigenph_file(
   ndims(raw) == 2 || error("Expected a 2D table in $path, got $(ndims(raw))D")
   size(raw, 2) >= 2 || error("Expected ≥ 2 columns in $path, got $(size(raw, 2))")
 
-  E = Float64.(raw[:, 1])
+  if unitsE === :eV
+    E = Float64.(raw[:, 1]) / AU2EV
+  elseif unitsE === :au
+    E = Float64.(raw[:, 1])
+  else
+    error("Unexpected energy units unitsE ($unitsE); try :eV or :au")
+  end
+
   δ = Float64.(raw[:, 2:end])
   nδ = size(δ,  2)
 
@@ -222,6 +233,7 @@ function load_eigenph_records(
     , recursive :: Bool = true
     , fname_regex :: Regex = r"eigenph\.all\.geom\d+$"
     , comments :: Bool = true
+    , unitsE :: Symbol = :eV
   )
 
   # -- resolve the geometry file
@@ -250,7 +262,7 @@ function load_eigenph_records(
 
   for (i, p) in pairs(paths)
 
-    d = read_eigenph_file(p; comments=comments)
+    d = read_eigenph_file(p; comments=comments, unitsE = unitsE)
     base = path_meta(p)
     base isa NamedTuple || error("path_meta must  return a NamedTuple, got a $(typeof(base))")
 
@@ -286,7 +298,7 @@ function render_table(
     io :: IO
   , t :: Table
   ; floatfmt :: AbstractString = "%.6g"
-  , missing_str :: AbstractString = "missing"
+  , missing_str :: AbstractString = "---"
   , colsep :: AbstractString = "  "
   , headersep :: Bool = true
   , maxrows :: Int = 100
@@ -349,4 +361,48 @@ function write_table(path::AbstractString, t::Table; headersep::Bool = false, kw
     render_table(io, t; headersep=headersep, kwargs...)
   end
   return path
+end
+
+"""
+   read_target_energies_file(path; comments = true, comment_char = '#', headedr_selector = t -> lowercase(t[1]) == "q")
+
+Reads the `target.energies` file at `path` and returns a TargetEnergies struct
+"""
+function read_target_energies(
+    path :: AbstractString
+  ; comments :: Bool = true
+  , comment_char :: Char = '#'
+  , header_selector = t -> lowercase(t[1]) == "q"
+  )
+
+  raw = readdlm(path; comments = comments, comment_char = comment_char)
+  ndims(raw) == 2 || error("Expected a 2D table in $path, got $(ndims(raw)) dims")
+  size(raw,2) >= 2 || error("Expected ≥2 columns in $path, got $(size(raw, 2))")
+
+  Q = Float64.(raw[:, 1])
+  E = Float64.(raw[:, 2:end])
+  nQ = length(Q)
+  nstates = size(E,2)
+
+  tokens = _read_header_tokens(path; comment_char = comment_char, header_selector = header_selector)
+
+  names = tokens === nothing ? ["state$j" for j in 1:nstates] :
+    _names_from_tokens(tokens, nstates)
+
+  return TargetEnergies(Q, E, names, String(path))
+
+end
+
+"""
+    load_target_for_mode(mode_root; Q0=0.0)
+
+Given a root directory for a normal mode, return the TargetEnergies and ground TargetState
+for that mode
+"""
+function load_target_for_mode(mode_root::AbstractString; Q0=0.0)
+    path = joinpath(mode_root, "target.energies")
+    isfile(path) || error("No target.energies at $path")
+    te = read_target_energies(path)
+    gs = ground_state(te; Q0=Q0)
+    return te, gs
 end

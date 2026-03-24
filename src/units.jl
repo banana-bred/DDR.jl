@@ -1,0 +1,5 @@
+export AU2EV, AU2SEC, AU2INVCM
+const AU2EV :: Float64 = 27.2113834
+const AU2SEC :: Float64 = 2.4188843e-17
+const AU2INVCM :: Float64 = 219474.6313710
+const ALLOWED_EUNITS = [:eV, :au]
