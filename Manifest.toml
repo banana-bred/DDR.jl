@@ -2,7 +2,7 @@
 
 julia_version = "1.12.4"
 manifest_format = "2.0"
-project_hash = "736c2a3252c3b6de13c1d5d751328e1ad83c343c"
+project_hash = "f193055bd26887f8abcbf1659957ac35a1eca6f7"
 
 [[deps.AliasTables]]
 deps = ["PtrArrays", "Random"]
@@ -96,7 +96,7 @@ uuid = "d38c429a-6771-53c6-b99e-75d170b6e991"
 version = "0.6.3"
 
 [[deps.DDR]]
-deps = ["DelimitedFiles", "LinearAlgebra", "Plots", "Printf", "Statistics"]
+deps = ["DelimitedFiles", "LinearAlgebra", "Plots", "Printf", "QuadGK", "Statistics"]
 path = "."
 uuid = "4a4e836b-f2ec-4376-8d7c-f73f805ca493"
 version = "0.1.0"
@@ -653,6 +653,18 @@ deps = ["Artifacts", "JLLWrappers", "Libdl", "Qt6Base_jll", "Qt6Declarative_jll"
 git-tree-sha1 = "8f528b0851b5b7025032818eb5abbeb8a736f853"
 uuid = "e99dba38-086e-5de3-a5b1-6e4c66e897c3"
 version = "6.8.2+2"
+
+[[deps.QuadGK]]
+deps = ["DataStructures", "LinearAlgebra"]
+git-tree-sha1 = "9da16da70037ba9d701192e27befedefb91ec284"
+uuid = "1fd47b50-473d-5c70-9696-f719f8f3bcdc"
+version = "2.11.2"
+
+    [deps.QuadGK.extensions]
+    QuadGKEnzymeExt = "Enzyme"
+
+    [deps.QuadGK.weakdeps]
+    Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 
 [[deps.REPL]]
 deps = ["InteractiveUtils", "JuliaSyntaxHighlighting", "Markdown", "Sockets", "StyledStrings", "Unicode"]

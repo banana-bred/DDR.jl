@@ -198,11 +198,11 @@ function center_records_at!(
 end
 
 """
-    sum_eigenphases(data :: EigenphData; cols = Union{Symbol, AbstractVector} :: = :all)
+    sum_eigenphases(data :: EigenphData; cols :: Union{Symbol, AbstractVector} = :all)
 
 Return the sum of selected eigenphase columns
 """
-function sum_eigenphases(data :: EigenphData; cols = Union{Symbol, AbstractVector} :: :all)
+function sum_eigenphases(data :: EigenphData; cols :: Union{Symbol, AbstractVector} = :all)
   return cols ===  :all  ? vec(sum(data.δ; dims=2)) :
                            vec(sum(@view(data.δ[:, cols]); dims=2))
 end

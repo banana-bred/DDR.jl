@@ -12,6 +12,7 @@ include("reson.jl")
 include("targ.jl")
 include("tables.jl")
 include("interp.jl")
-include("diss.jl")
+include("pathways.jl")
+include("dissociation.jl")
 
 end # module DDR

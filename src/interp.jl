@@ -60,7 +60,7 @@ function (f :: PolyInterp1D)(xq :: Real)
 end
 
 """
-    _make_interp(x, y; kind=:linear, clampx=true)
+    _make_interp(x, y; kind=:linear, clampx=false)
 
 Constructs a simple 1D interpolant. Allowed `kind`s:
 - :linear
@@ -71,7 +71,7 @@ function _make_interp(
     x :: AbstractVector
   , y :: AbstractVector
   ; kind :: Symbol =:linear
-  , clampx :: Bool =true
+  , clampx :: Bool = false
   )
 
   xs, ys = _sorted_xy(x, y)

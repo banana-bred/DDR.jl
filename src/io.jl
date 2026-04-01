@@ -4,7 +4,7 @@ import Printf
 # -- procedures
 export read_eigenph_file
 export read_geom_file
-export read_target_energies_file
+export read_target_energies
 export discover_eigenph_files
 export load_eigenph_records
 export load_target_for_mode
@@ -364,7 +364,7 @@ function write_table(path::AbstractString, t::Table; headersep::Bool = false, kw
 end
 
 """
-   read_target_energies_file(path; comments = true, comment_char = '#', headedr_selector = t -> lowercase(t[1]) == "q")
+   read_target_energies(path; comments = true, comment_char = '#', headedr_selector = t -> lowercase(t[1]) == "q")
 
 Reads the `target.energies` file at `path` and returns a TargetEnergies struct
 """
