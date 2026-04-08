@@ -1,4 +1,4 @@
-module DDR
+module DEAR
 
 # using Distributed
 
@@ -15,4 +15,4 @@ include("interp.jl")
 include("pathways.jl")
 include("dissociation.jl")
 
-end # module DDR
+end # module DEAR

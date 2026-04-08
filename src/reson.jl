@@ -1,6 +1,8 @@
 using Statistics: median
 export find_resonances, find_resonances_across_records
 export track_resonance
+export track_resonances_auto
+export remove_tracked_resonance_from_pool!
 
 ###############
 ### HELPERS ###

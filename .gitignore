@@ -6,3 +6,4 @@ data
 python
 TODO
 **/*.tsv
+*.txt

@@ -4,6 +4,7 @@ export Table
 export NormalMode
 export Channel, ChannelMode
 export TargetEnergies, TargetState
+export TrackedResonanceBranch
 export DissociationPathway, DissociationPathwayFit
 export HarmonicPotential
 
@@ -290,3 +291,10 @@ end
   return 0.5*h.ω * (Q - h.Qeq)^2 - h.Vref0
 end
 @inline (h :: HarmonicPotential)(Q :: Real) = h(Float64(Q))
+
+struct TrackedResonanceBranch
+  label    :: String
+  selector :: Vector{String}
+  idxres   :: Vector{IndexedResonance}
+  tracked  :: Vector{Union{Resonance, Missing}}
+end

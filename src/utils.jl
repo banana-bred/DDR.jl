@@ -156,17 +156,17 @@ function load_mode(
 
     root = joinpath(data_root, mode)
     isdir(root) || error("Mode directory DNE: $root")
-    recs = DDR.load_eigenph_records(root)
+    recs = DEAR.load_eigenph_records(root)
 
     sortQ && sort!(recs, by = r -> (ismissing(r.meta.Q) ? Inf : r.meta.Q))
 
     if preprocess
-      DDR.unwrap!(recs; Emin=Emin_unwrap, period=period)
-      DDR.center_records_at!(recs; Eref=Eref_center, period=period)
+      DEAR.unwrap!(recs; Emin=Emin_unwrap, period=period)
+      DEAR.center_records_at!(recs; Eref=Eref_center, period=period)
     end
 
     # -- get records, and attach mode into metadata
-    recs = [DDR.EigenphRecord(r.data, r.path, (; r.meta..., mode=mode)) for r in recs]
+    recs = [DEAR.EigenphRecord(r.data, r.path, (; r.meta..., mode=mode)) for r in recs]
 
     return NormalMode(mode, root, recs)
 
