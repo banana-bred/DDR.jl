@@ -193,6 +193,70 @@ function _auto_Emin_from_yabs(
 
 end
 
+@inline _are_same_resonance(a :: Resonance, b :: Resonance) =
+  a.col  == b.col   &&
+  a.E    == b.E     &&
+  isequal(a.Γ, b.Γ) && # may be missing: return true if Γ is the same or if both are missing
+  a.peak == b.peak
+
+"""
+    _selector_vector(records; selector=nothing, col=nothing)
+
+Returns a vector of selector names describing the resonance column selection.
+If selector isa:
+- String -> return `[selector]`
+- Vector{<:AbstractString} -> return String.(selector)
+- other: resolve a single column index `c` and return its name as a
+  1-element vector, `[records[1].data.names[c]]`
+"""
+function _selector_vector(
+      records :: AbstractVector{<:EigenphRecord}
+    ; selector = nothing
+    , col=nothing
+  )
+  isempty(records) && return String[]
+  data0 = records[1].data
+  if selector isa AbstractString
+    return [String(selector)]
+  elseif selector isa AbstractVector{<:AbstractString}
+    return String.(selector)
+  else
+    c = resolve_col(data0; selector=selector, col=col)
+    return [data0.names[c]]
+  end
+end
+
+"""
+    _seed_candidates(resbyrec, col; seed_Emax, seed_Emin=-Inf)
+
+Used by the automatic multi-branch tracker to decide which resonance branches are allowed to start.
+Collect candidate resonance seeds for one eigenphase column `col`.
+Only resonances with energy in the interval [seed_Emin, seed_Emax] are kept as seeds.
+Returns a vector of IndexedResonance.
+"""
+function _seed_candidates(
+      resbyrec  :: AbstractVector{<:AbstractVector{<:Resonance}}
+    , col       :: Int
+    ; seed_Emax :: Real
+    , seed_Emin :: Real = -Inf
+  )
+  Emin, Emax = float.((seed_Emin, seed_Emax))
+
+  seeds = IndexedResonance[]
+
+  for recid in eachindex(resbyrec)
+    for r in resbyrec[recid]
+      r.col == col        || continue
+      Emin <= r.E <= Emax || continue
+      push!(seeds, (recid, r))
+    end
+  end
+
+  sort!(seeds, by = t -> (t[2].E, t[1]))
+  return seeds
+
+end
+
 ##############
 ### PUBLIC ###
 ##############
@@ -329,6 +393,29 @@ function find_resonances_across_records(records :: AbstractVector{<:EigenphRecor
 end
 
 """
+    remove_tracked_resonance_from_pool!(resbyrec, tracked)
+
+Remove resonance points that are already tracked from the candidate poool so tat they cannot be reused
+"""
+function remove_tracked_resonance_from_pool!(
+    resbyrec :: AbstractVector{<:AbstractVector{<:Resonance}}
+  , tracked  :: AbstractVector{<:Union{Resonance, Missing}}
+  )
+
+  nresbyrec, ntracked = length(resbyrec), length(tracked)
+  nresbyrec == ntracked || error("resbyrec (length $nresbyrec) and tracked (length $ntracked) have different lengths")
+
+  for recid in eachindex(resbyrec)
+    tr = tracked[recid]
+    ismissing(tr) && continue
+    filter!(r -> !_are_same_resonance(r, tr), resbyrec[recid])
+  end
+
+  return resbyrec
+
+end
+
+"""
     track_resonance()
 
 Pick ONE resonance per record and try tracking it across Q.
@@ -439,5 +526,126 @@ function track_resonance(
   byrec = resonances_by_record(idxres, length(records))
 
   return track_resonance(byrec, col; kwargs...)
+
+end
+
+"""
+    track_resonances_auto(records, idxres; selector=nothing, col=nothing, seed_emax..)
+
+Automatically track multiple resonance branches without double counting them.
+
+Behavior
+⁻⁻⁻⁻⁻⁻⁻⁻
+- Only resonance points with `seed_Emin <= E <= seed_Emax` are allowed to seed a branch
+- Once a branch is accepted, its selected points are removed from the resonance poool
+- A branch seeded below `seed_Emax` may continue above it
+- A branch that is entirely above `seed_Emax` is never seeded
+- A branch seeded above `seed_Emin` may continue below it
+- A branch that is entirely below `seed_Emin` is never seeded
+- Missing records are allowed
+
+Returns a vector of `TrackedResonanceBranch`
+"""
+function track_resonances_auto(
+      records       :: AbstractVector{<:EigenphRecord}
+    , idxres        :: AbstractVector{<:IndexedResonance}
+    ; selector                              = nothing
+    , col                                   = nothing
+    , seed_Emax     :: Real
+    , seed_Emin     :: Real                 = -Inf
+    , label_prefix  :: AbstractString       = "branch"
+    , min_hits      :: Int                  = 2
+    # -- tracking
+    , window        :: Union{Nothing, Real} = nothing
+    , follow        :: Bool                 = true
+    , follow_window :: Union{Nothing, Real} = nothing
+    , pick          :: Symbol               = :closest
+    , match_width   :: Bool                 = true
+    , width_rtol    :: Real                 = 0.75
+    , width_atol    :: Real                 = 0.0
+    , width_strict  :: Bool                 = false
+    , width_ref                             = nothing
+  )
+
+  isempty(records) && error("No records for tracking !")
+
+  _col = resolve_col(records[1].data; selector=selector, col=col)
+  selvec = _selector_vector(records; selector=selector, col=col)
+
+  # -- working poool of cadidate resonances
+  poool = resonances_by_record(idxres, length(records))
+
+  branches = TrackedResonanceBranch[]
+  ibranch = 0
+
+  while true
+    seeds = _seed_candidates(poool, _col; seed_Emax=seed_Emax, seed_Emin=seed_Emin)
+    isempty(seeds) && break
+
+    seed_recid, seed = first(seeds)
+
+    # -- choose the tracking window
+    #    No window supplied ? use a couple of widths. If there is not width, use the spacing
+    #    between energies
+    win = if window === nothing
+      if !ismissing(seed.Γ) && seed.Γ > 0
+        2.0 * float(seed.Γ)
+      else
+        samecol_E = sort(unique([ r.E for rec in poool for r in rec if r.col == _col ]))
+        ΔE = length(samecol_E) > 1 ? median(diff(samecol_E)) : 1e-6
+        max(2.0 * ΔE, 1e-6)
+      end
+    else
+      float(window)
+    end
+
+    fwin = follow_window === nothing ? win : float(follow_window)
+
+    tracked = track_resonance(
+        poool
+      , _col
+      ; center = seed.E
+      , window = win
+      , follow = follow
+      , follow_window = fwin
+      , pick = pick
+      , match_width = match_width
+      , width_rtol = width_rtol
+      , width_atol = width_atol
+      , width_strict = width_strict
+      , width_ref = width_ref === nothing ? (ismissing(seed.Γ) ? nothing : float(seed.Γ)) : width_ref
+    )
+
+    nhits = count(!ismissing, tracked)
+
+    if nhits < min_hits
+      # -- reject this seed and remove only the seed itself
+      filter!(r -> !_are_same_resonance(r, seed), poool[seed_recid])
+      continue
+    end
+
+    ibranch += 1
+
+    branch_idxres = IndexedResonance[]
+    for recid in eachindex(tracked)
+      tr = tracked[recid]
+      ismissing(tr) && continue
+      push!(branch_idxres, (recid, tr))
+    end
+
+    push!(branches, TrackedResonanceBranch(
+        "$(label_prefix)_$(ibranch)"
+      , selvec
+      , branch_idxres
+      , tracked
+    ))
+
+    # -- remove all selected points from the candidate poool so that they
+    #    cannot be reused
+    remove_tracked_resonance_from_pool!(poool, tracked)
+
+  end
+
+  return branches
 
 end

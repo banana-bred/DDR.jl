@@ -9,6 +9,8 @@ export fits_for_channel
 export build_channel_surface, build_channel_surfaces
 export fit_path, fit_paths
 export Eres, Γ, V, U, dUds
+export build_dissociation_path, build_dissociatin_path_autostart
+export build_dissociation_paths, build_dissociation_paths_autostart
 
 ###############
 ### HELPERS ###
@@ -250,11 +252,92 @@ function _merge_partial_dissociation_paths(
   )
 end
 
+"Returns a small list of candidate starting points `q0` for dissociation path construction"
+function _get_default_q0_candidates(surface :: ChannelSurface)
+
+  n = length(surface.modes)
+
+  # -- try the original default
+  cands = Vector{Vector{Float64}}()
+  push!(cands, zeros(n))
+
+  # -- try nearest in range for each mode fit
+  qclamp0 = [clamp(0.0, fit.qmin, fit.qmax) for fit in surface.fits]
+  qclamp0 == cands[1] || push!(cands, qclamp0)
+
+  # -- try lower/upper corners of fit box
+  qmins = [fit.qmin for fit in surface.fits]
+  qmaxs = [fit.qmax for fit in surface.fits]
+  push!(cands, qmins)
+  push!(cands, qmaxs)
+
+  # -- try modewise midpoints
+  qmid = [(fit.qmin + fit.qmax)/2 for fit in surface.fits]
+  push!(cands, qmid)
+
+  return cands
+
+end
+
 ###################
 ###################
 ### P U B L I C ###
 ##VVVVVVVVVVVVVVV##
 #vvvvvvvvvvvvvvvvv#
+
+"""
+    build_dissociation_path_autostart(surface, space; q0_candidates = nothing, range_pad = 0.0, grad_tol = 1e-8)
+
+Constructs a dissociatin path by trying several starting points `q0` until a non-empty path is found
+"""
+function build_dissociation_path_autostart(
+    surface :: ChannelSurface
+  , spec :: DissCalcSpec
+  ; q0_candidates :: Union{Nothing, AbstractVector} = nothing
+  , range_pad :: Float64 = 0.0
+  , grad_tol :: Float64 = 1e-8
+  )
+
+  cands = q0_candidates === nothing ? _get_default_q0_candidates(surface) : q0_candidates
+
+  for q0 in cands
+    path = build_dissociation_path(
+        surface
+      , spec
+      ; q0=q0
+      , range_pad=range_pad
+      , grad_tol=grad_tol
+   )
+    isempty(path.s) || return path
+  end
+
+  # -- nothing worked; return old default
+  return build_dissociation_path(
+      surface
+    , spec
+    ; q0=zeros(length(surface.modes))
+    , range_pad=range_pad
+    , grad_tol=grad_tol
+  )
+
+end
+
+"""
+    build_dissociation_paths_autostart(surfaces, spec; kwargs..)
+
+Build several dissociation paths with `build_dissociation_path_autostart()`
+"""
+function build_dissociation_paths_autostart(
+      surfaces :: AbstractVector{<:ChannelSurface}
+    , spec :: DissCalcSpec
+    , kwargs...
+  )
+  paths = DissociationPathway[]
+  for surface in surfaces
+    push!(paths, build_dissociation_path_autostart(surface, spec; kwargs...))
+  end
+  return paths
+end
 
 """
     prepare_dissociation_model(widetable, spec; targets_by_mode, kwargs...)

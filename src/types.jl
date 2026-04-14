@@ -246,6 +246,9 @@ end
 "Dissociation result from a subset of considered channels"
 struct PartialDissociationResult
   channel  :: String
+  family   :: String
+  spinmult :: Union{Int, Nothing}
+  spinwght :: Float64
   energies :: Vector{Float64}
   σ        :: Vector{Float64}
   path     :: DissociationPathway
@@ -257,6 +260,7 @@ struct TotalDissociationResult
   energies          :: Vector{Float64}
   σ                 :: Vector{Float64}
   channel_fractions :: Dict{String, Vector{Float64}}
+  family_fractions  :: Dict{String, Vector{Float64}}
 end
 
 """

@@ -6,15 +6,88 @@ export select_root
 export thermal_rate, thermal_rates
 export σ
 export channel_E0
+export get_spinmult
+export resolve_spinwght
 
-####################
-### ROOT FINDERS ###
-####################
+###############
+### HELPERS ###
+###############
+
+@inline _family_name(name :: AbstractString) = String(replace(name, r"\s*\[\d+\]$" => ""))
 
 @inline _branch_from_s(s::Real) =
     s < 0 ? :negative :
     s > 0 ? :positive :
             :inner
+
+"""
+    get_spinmult(label)
+
+Get the spin multiplicity from a label, e.g., 'singlet' -> 1, 'triplet' -> 3.
+If this doesn't work, try the form, e.g., 1A1 -> 1, 3B2 -> 3.
+Else, return nothing
+"""
+function get_spinmult(label :: AbstractString)
+  s = lowercase(strip(String(label)))
+  # -- words
+  occursin("singlet", s) && return 1
+  occursin("doublet", s) && return 2
+  occursin("triplet", s) && return 3
+  occursin("quartet", s) && return 4
+  occursin("quintet", s) && return 5
+  occursin("sextet", s) && return 6
+  # -- numeric
+  m = match(r"^\s*(\d+)\s*[A-Za-z]", String(label))
+  return m === nothing ? nothing : parse(Int, m.captures[1])
+end
+
+"""
+    resolve_spinwght(family, spinmult, target_spinmult, spin_mode)
+
+Resolves the resonance spin multiplicity and statistical weight for an
+unpolarized electron incident on a target of multiplicity `target_spinmult`
+
+`spin_mode`
+----------
+- :auto   -> infer `M` from `family` unless `spinmult` is supplied
+- :manual -> use `spinmult` directly
+- :none   -> disable spin weighting, return `(nothing, 1.0)`
+
+Returns `(M,w)`, where
+- `M`: resonance multiplicity 2S+1
+- `w = M/(2*target_spinmult)`
+
+If `target_spinmult` is not give, returns weigh `1.0`.
+"""
+function resolve_spinwght(
+      family          :: AbstractString
+    , spinmult        :: Union{Int, Nothing} = nothing
+    , target_spinmult :: Union{Int, Nothing} = nothing
+    , spin_mode       :: Symbol = :auto
+  )
+
+  M = if spin_mode === :none
+    nothing
+  elseif spin_mode === :manual
+    spinmult
+  elseif spin_mode === :auto
+    isnothing(spinmult) ? get_spinmult(family) : spinmult
+  else
+    throw(ArgumentError("unsupported spin_mode=$spin_mode"))
+  end
+
+  isnothing(M) && return (nothing, 1.0)
+  isnothing(target_spinmult) && return (M, 1.0)
+
+  # -- unpolarized electron
+  w = Float64(M) / (2.0 * Float64(target_spinmult))
+  return (M, w)
+
+end
+
+####################
+### ROOT FINDERS ###
+####################
 
 """
     find_s_all(pathfit, f, target; tol=1e-10)
@@ -280,16 +353,27 @@ function compute_partial_dissociation(
     , Egrid :: AbstractVector{<:Real}
     , mode_freqs :: AbstractDict{String, <:Real}
     , targets_by_mode :: AbstractDict{String, <:TargetState}
+    , spinmult :: Union{Int, Nothing} = nothing
+    , target_spinmult :: Union{Int, Nothing} = nothing
+    , spin_mode :: Symbol = :auto
     , kwargs...
   )
 
   E0 = channel_E0(channel, mode_freqs)
   ζ_eval = ζ_path_fit(pathfit, targets_by_mode; kind=:linear)
+
+  family = _family_name(pathfit.channel)
+  spinmult, spinwght = resolve_spinwght(family, spinmult, target_spinmult, spin_mode)
+
   σvals = σ(pathfit, Egrid; E0=E0, ζ_eval=ζ_eval, kwargs...)
+  σvals .*= spinwght
 
   return PartialDissociationResult(
       pathfit.channel
-    , copy(Egrid)
+    , family
+    , spinmult
+    , spinwght
+    , copy(Float64.(Egrid))
     , σvals
     , pathfit.path
   )
@@ -308,6 +392,9 @@ function compute_total_dissociation(
     , Egrid :: AbstractVector{<:Real}
     , mode_freqs :: AbstractDict{String, <:Real}
     , targets_by_mode :: AbstractDict{String, <:TargetState}
+    , channel_spinmults :: AbstractDict{String, <:Integer} = Dict{String, Int}()
+    , target_spinmult :: Union{Int, Nothing} = nothing
+    , spin_mode :: Symbol = :auto
     , kwargs...
   )
 
@@ -322,6 +409,9 @@ function compute_total_dissociation(
       , Egrid=Egrid
       , mode_freqs=mode_freqs
       , targets_by_mode=targets_by_mode
+      , spinmult=get(channel_spinmults, pathfits[i].channel, nothing)
+      , target_spinmult=target_spinmult
+      , spin_mode=spin_mode
       , kwargs...
     )
     for i in eachindex(pathfits, channels)
@@ -329,7 +419,7 @@ function compute_total_dissociation(
 
   isempty(partials) && error("No partial results to combine !")
 
-  energies = copy(Egrid)
+  energies = copy(Float64.(Egrid))
   σtot = zeros(Float64, length(energies))
 
   for part in partials
@@ -346,11 +436,29 @@ function compute_total_dissociation(
     channel_fractions[part.channel] = frac
   end
 
+  familyσ = Dict{String, Vector{Float64}}()
+  for part in partials
+    if !haskey(familyσ, part.family)
+      familyσ[part.family] = zeros(Float64, length(energies))
+    end
+    familyσ[part.family] .+= part.σ
+  end
+
+  family_fractions = Dict{String, Vector{Float64}}()
+  for (fam, σfam) in familyσ
+    frac = similar(σfam)
+    for i in eachindex(frac)
+      frac[i] = σtot[i] > 0 ? σfam[i] / σtot[i] : 0.0
+    end
+    family_fractions[fam] = frac
+  end
+
   return TotalDissociationResult(
       partials
     , energies
     , σtot
     , channel_fractions
+    , family_fractions
   )
 
 end

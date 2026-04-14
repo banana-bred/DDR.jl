@@ -1,6 +1,6 @@
 using Printf
 
-export select_cols, resolve_cols, resolve_resonances
+export select_cols, resolve_col, resolve_cols, resolve_resonances
 export resonances_by_record
 export write_table
 export resonance_table_wide, resonance_table_long
@@ -85,6 +85,23 @@ select_cols(data :: EigenphData, selector :: Regex) =
 # convenience: selector = varargs strings, e.g. select_cols(data, "singlet A1", "triplet B2")
 select_cols(data :: EigenphData, needles :: AbstractString...) =
     select_cols(data, collect(needles))
+
+"""
+    resolve_col(data; cols=:all, selector=nothing, col=nothing)
+
+Resolves exactly one column from eigenphase data
+"""
+function resolve_col(
+      data :: EigenphData
+    ; cols = :all
+    , selector = nothing
+    , col = nothing
+  )
+  col === nothing || return Int(col)
+  colidx = resolve_cols(data; cols=cols, selector=selector)
+  length(colidx) == 1 || error("Need exactly 1 column, got $(length(colidx)): $(data.names[colidx])")
+  return colidx[1]
+end
 
 """
     resolve_cols(data :: EigenphData; cols=:all, selector=nothing)
