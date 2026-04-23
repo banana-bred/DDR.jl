@@ -9,7 +9,7 @@ export fits_for_channel
 export build_channel_surface, build_channel_surfaces
 export fit_path, fit_paths
 export Eres, Γ, V, U, dUds
-export build_dissociation_path, build_dissociatin_path_autostart
+export build_dissociation_path,  build_dissociation_path_autostart
 export build_dissociation_paths, build_dissociation_paths_autostart
 
 ###############
@@ -71,9 +71,9 @@ Mode names in coordinate order for the channel surface
 _surface_modes(channel :: Channel) = [cm.mode_name for cm in channel.modes]
 
 "Reference value of Eres at Q=0"
-_fit_Eres0(fit :: ModeFit) = fit.Eres_fit(0.0)
+_fit_Eres0(fit :: ModeFit) = fit.Eres_fit(clamp(0.0, fit.qmin, fit.qmax))
 "Reference value of Γ at Q=0"
-_fit_Γ0(fit :: ModeFit) = fit.Γ_fit(0.0)
+_fit_Γ0(fit :: ModeFit) = fit.Γ_fit(clamp(0.0, fit.qmin, fit.qmax))
 
 "Converts `q` to a Float64 and makes sure that it has the right length"
 function _qvec(surface :: ChannelSurface, q :: AbstractVector)
@@ -85,9 +85,42 @@ end
 
 "Simple finite difference [f(x+h) - f(x-h)] / 2h"
 @inline function _fd(f, x :: Float64; h :: Float64 = 1e-4)
-  xp = Float64(x) + h
-  xm = Float64(x) - h
-  return (f(xp) - f(xm)) / 2h
+
+  x0 = Float64(x)
+  xp = x0 + h
+  xm = x0 - h
+
+  y0 = f(x0)
+
+  okp, okm = (true, true)
+  yp,  ym  = (0.0,  0.0)
+
+  # -- get f(x) if in bounds
+  try
+    yp = f(xp)
+  catch
+    okp = false
+  end
+
+  # -- get f(x) if in bounds
+  try
+    ym = f(xm)
+  catch
+    okm = false
+
+  end
+
+  if okp && okm
+    return (yp - ym) / (2h)
+  elseif okp
+    return (yp - y0) / h
+  elseif okm
+    return (y0 - ym) / h
+  else
+    error("Could not evaluate finite-difference derivative at x=$x0; both evaluations failed for
+          xm = $xm
+          xp = $xp")
+  end
 end
 @inline _fd(f, x::Real; h::Float64 = 1e-4) = _fd(f, Float64(x); h=h)
 
@@ -135,6 +168,15 @@ end
   return h.ω * (Q - h.Qeq)
 end
 @inline _deriv(h :: HarmonicPotential, Q :: Real) = _deriv(h, Float64(Q))
+
+@inline function _deriv(f :: Union{PCHIPInterp1D, AkimaInterp1D}, x :: Float64; h :: Float64 = 1e-4)
+  xx = f.clampx ? clamp(x, f.xmin, f.xmax) : x
+  xl = max(f.xmin, xx - h)
+  xr = min(f.xmax, xx + h)
+  xr == xl && return 0.0
+  return (f(xr) - f(xl)) / (xr - xl)
+end
+@inline _deriv(f :: Union{PCHIPInterp1D, AkimaInterp1D}, x :: Real; h :: Float64 = 1e-4) = _deriv(f, Float64(x); h=h)
 
 """
     _find_brackets(x, y, ytarget)
@@ -279,6 +321,191 @@ function _get_default_q0_candidates(surface :: ChannelSurface)
 
 end
 
+@inline _surface_interp_override(
+      surface_interp_overrides :: AbstractDict{String, <:Any}
+    , channel_name :: AbstractString
+   ) = get(surface_interp_overrides, String(channel_name), nothing)
+
+@inline _surface_extrap_override(
+      surface_extrap_overrides :: AbstractDict{String, <:Any}
+    , channel_name :: AbstractString
+   ) = get(surface_extrap_overrides, String(channel_name), nothing)
+
+@inline function _merge_interp_spec(
+      interp :: InterpSpec
+    , override
+  )
+
+  override === nothing && return interp
+
+  return InterpSpec(
+      isnothing(override.Eres_kind) ? interp.Eres_kind : override.Eres_kind
+    , isnothing(override.Γ_kind)    ? interp.Γ_kind    : override.Γ_kind
+    , isnothing(override.V_kind)    ? interp.V_kind    : override.V_kind
+    , isnothing(override.path_kind) ? interp.path_kind : override.path_kind
+  )
+end
+
+@inline function _merge_extrap_spec(
+      extrap :: ExtrapSpec
+    , override
+  )
+
+  override === nothing && return extrap
+
+  return ExtrapSpec(
+      isnothing(override.Eres_left_kind)  ? extrap.Eres_left_kind  : override.Eres_left_kind
+    , isnothing(override.Eres_right_kind) ? extrap.Eres_right_kind : override.Eres_right_kind
+    , isnothing(override.Γ_left_kind)     ? extrap.Γ_left_kind     : override.Γ_left_kind
+    , isnothing(override.Γ_right_kind)    ? extrap.Γ_right_kind    : override.Γ_right_kind
+    , isnothing(override.V_left_kind)     ? extrap.V_left_kind     : override.V_left_kind
+    , isnothing(override.V_right_kind)    ? extrap.V_right_kind    : override.V_right_kind
+    , isnothing(override.Qpad_left)       ? extrap.Qpad_left       : override.Qpad_left
+    , isnothing(override.Qpad_right)      ? extrap.Qpad_right      : override.Qpad_right
+  )
+end
+
+@inline function _path_kind_with_override(
+      default_kind :: Symbol
+    , override
+  )
+  override === nothing && return default_kind
+  return isnothing(override.path_kind) ? default_kind : override.path_kind
+end
+
+"""
+    _edge_poly2_interp(x, y; side=:left, nedge=5)
+
+Quadratic fit to edge points, used for local edge extrapolation.
+Falls back to `nothing` if <3 points are available.
+"""
+function _edge_poly2_interp(
+      x :: AbstractVector{<:Real}
+    , y :: AbstractVector{<:Real}
+    ; side=:left
+    , nedge=5
+  )
+
+  xs, ys = _sorted_xy(x, y)
+  n = length(xs)
+  n < 3 && return nothing
+
+  nuse = min(nedge, n)
+  if side === :left
+    idx = 1:nuse
+  elseif side === :right
+    idx = (n - nuse + 1):n
+  else
+    throw(ArgumentError("side must be :left or :right"))
+  end
+
+  length(idx) < 3 && return nothing
+  c = _polyfit(xs[idx], ys[idx], 2)
+  return PolyInterp1D(c, xs[first(idx)], xs[last(idx)], false)
+
+end
+
+function _wrap_with_extrapolation(
+      f_in
+    , xs :: AbstractVector{<:Real}
+    , ys :: AbstractVector{<:Real}
+    ; left_kind :: Symbol = :none
+    , right_kind :: Symbol = :none
+    , Qpad_left :: Real = 0.0
+    , Qpad_right :: Real = 0.0
+    , nedge_left :: Int = 5
+    , nedge_right :: Int = 5
+    , harmonic_model = nothing
+    , clamp_nonnegative :: Bool = false
+  )
+
+  xfit, yfit = _sorted_xy(xs, ys)
+  xmin, xmax = extrema(xfit)
+
+  yL, yR = f_in.((xmin, xmax))
+
+  mL = _deriv(f_in, xmin)
+  mR = _deriv(f_in, xmax)
+
+  # -- edge secants from raw data
+  sL = length(xfit) >= 2 ? (yfit[2]   - yfit[1])     / (xfit[2]   - xfit[1])     : mL
+  sR = length(xfit) >= 2 ? (yfit[end] - yfit[end-1]) / (xfit[end] - xfit[end-1]) : mR
+
+  polyL = left_kind  === :poly2_edge ? _edge_poly2_interp(xfit, yfit; side=:left,  nedge=nedge_left)  : nothing
+  polyR = right_kind === :poly2_edge ? _edge_poly2_interp(xfit, yfit; side=:right, nedge=nedge_right) : nothing
+
+  @inline _maybe_nonneg(y) = clamp_nonnegative ? max(0.0, y) : y
+
+  function fout(x :: Real)
+    xx = Float64(x)
+
+    if xmin <= xx <= xmax
+
+      return _maybe_nonneg(f_in(xx))
+
+    elseif xx < xmin
+
+      # -- left extrap
+      xx >= xmin - Float64(Qpad_left) || error("left extrapolation detected beyond allowed window at x=$xx")
+
+      y = if left_kind === :none
+        error("No left extrapolation defined at x=$xx")
+      elseif left_kind === :tangent
+        yL + mL * (xx - xmin)
+      elseif left_kind === :constant
+        yL
+      elseif left_kind === :secant
+        yL + sL * (xx - xmin)
+      elseif left_kind === :poly2_edge
+        # -- use the interpolating polynomial if it's there
+        f_in isa PolyInterp1D ? f_in(xx) :
+          polyL === nothing ? yL + mL * (xx - xmin) : polyL(xx)
+      elseif left_kind === :harmonic
+        harmonic_model === nothing && error("No harmonic model available for left extrapolation")
+        harmonic_model(xx)
+      elseif left_kind === :zero
+        0.0
+      else
+        error("Unsupported left extrapolation kind $left_kind")
+      end
+
+      return _maybe_nonneg(y)
+
+    else
+
+      # -- right extrap
+      xx <= xmax + Float64(Qpad_right) || error("right extrapolation detected beyond allowed window at x=$xx")
+
+      y = if right_kind === :none
+        error("No right extrapolation defined at x=$xx")
+      elseif right_kind === :tangent
+        yR + mR * (xx - xmax)
+      elseif right_kind === :constant
+        yR
+      elseif right_kind === :secant
+        yR + sR * (xx - xmax)
+      elseif right_kind === :poly2_edge
+        f_in isa PolyInterp1D ? f_in(xx) :
+          polyR === nothing ? yR + mR * (xx - xmax) : polyR(xx)
+      elseif right_kind === :harmonic
+        harmonic_model === nothing && error("No harmonic model available for right extrapolation")
+        harmonic_model(xx)
+      elseif right_kind === :zero
+        0.0
+      else
+        error("Unsupported right extrapolation kind $right_kind")
+      end
+
+      return _maybe_nonneg(y)
+
+    end
+
+  end
+
+  return fout
+
+end
+
 ###################
 ###################
 ### P U B L I C ###
@@ -330,7 +557,7 @@ Build several dissociation paths with `build_dissociation_path_autostart()`
 function build_dissociation_paths_autostart(
       surfaces :: AbstractVector{<:ChannelSurface}
     , spec :: DissCalcSpec
-    , kwargs...
+    ; kwargs...
   )
   paths = DissociationPathway[]
   for surface in surfaces
@@ -340,23 +567,35 @@ function build_dissociation_paths_autostart(
 end
 
 """
-    prepare_dissociation_model(widetable, spec; targets_by_mode, kwargs...)
+    prepare_dissociation_model(widetable, spec; targets_by_mode, surface_interp_overrides, surface_extrap_overrides, kwargs...)
 
 Widetable -> dissociation model pipeline
 """
 function prepare_dissociation_model(
-    widetable :: Table
-  , spec :: DissCalcSpec
-  ; targets_by_mode :: AbstractDict{String, <:Any} = Dict{String, Any}()
+    widetable                :: Table
+  , spec                     :: DissCalcSpec
+  ; targets_by_mode          :: AbstractDict{String, <:Any} = Dict{String, Any}()
+  , surface_interp_overrides :: AbstractDict{String, <:Any} = Dict{String, Any}()
+  , surface_extrap_overrides :: AbstractDict{String, <:Any} = Dict{String, Any}()
   , kwargs...
   )
   validate_calc_spec(widetable, spec)
   longtable = widetable_to_longtable(widetable, spec)
-  curves = parse_mode_curves(longtable; qcol = spec.qcol)
-  fits = fit_mode_curves(curves, spec; targets_by_mode = targets_by_mode)
-  surfaces = build_channel_surfaces(fits, spec)
-  paths = build_dissociation_paths(surfaces, spec; kwargs...)
-  pathfits = fit_paths(paths; kind = spec.interp.path_kind)
+  curves    = parse_mode_curves(longtable; qcol = spec.qcol)
+  fits      = fit_mode_curves(
+      curves
+    , spec
+    ; targets_by_mode = targets_by_mode
+    , surface_interp_overrides=surface_interp_overrides
+    , surface_extrap_overrides=surface_extrap_overrides
+  )
+  surfaces  = build_channel_surfaces(fits, spec)
+  paths     = build_dissociation_paths(surfaces, spec; kwargs...)
+  pathfits  = fit_paths(
+      paths
+    ; kind = spec.interp.path_kind
+    , surface_interp_overrides=surface_interp_overrides
+  )
   return (
       longtable = longtable
     , curves = curves
@@ -498,7 +737,7 @@ end
 ###############
 
 """
-    fit_mode_curve
+    fit_mode_curve(curve; interp, extrap, target, mode_freqs)
 
 Builds a `ModeFit` from a `ModeCurve`, constructing callable fits for the following :
 - `Eres(Q)`
@@ -507,36 +746,82 @@ Builds a `ModeFit` from a `ModeCurve`, constructing callable fits for the follow
 
 Arguments
 ---------
-- `curve` :
-    Resonance curve extracted from the longtable
-- `interp` :
-    `InterpSpec` describing how to fit/interpolate `Eres`, `Γ`, and `V`
-- `target` :
-    Optional `TargetState` for this mode; required when `interp.V_kind` needs the target potential curve
-- `mode_freqs` :
-    Optional mode frequencies; needed when `interp.V_kind` requries them,
-    e.g., `interp_Vkind === :harmonic`
+- `curve` : Resonance curve extracted from the longtable
+- `interp` : `InterpSpec` describing how to fit/interpolate `Eres`, `Γ`, and `V`
+- `extrap` : `ExtrapSpec` describing how to fit/extrapolate `Eres`, `Γ`, and `V`
+- `target` : Optional `TargetState` for this mode; required when `interp.V_kind` needs the target potential curve
+- `mode_freqs` : Optional mode frequencies; needed when `interp.V_kind` requries them, e.g., `interp_Vkind === :harmonic`
 """
 function fit_mode_curve(
-    curve :: ModeCurve
-  ; interp :: InterpSpec
-  , target :: Union{TargetState, Nothing} = nothing
-  , mode_freqs :: AbstractDict{String, <:Real} = Dict{String, Float64}()
+      curve       :: ModeCurve
+    ; interp      :: InterpSpec
+    , extrap      :: ExtrapSpec
+    , target      :: Union{TargetState, Nothing} = nothing
+    , mode_freqs  :: AbstractDict{String, <:Real} = Dict{String, Float64}()
+    , nedge_left  :: Int = 5
+    , nedge_right :: Int = 5
   )
 
   isempty(curve.Q) &&
     error("Can't fit empty ModeCurve for channel '$(curve.channel_name)', 'mode = $(curve.mode_name)'")
 
-  Qmin, Qmax = extrema(curve.Q)
+  let allowed_Γ = (:constant, :tangent, :secant, :zero)
+    extrap.Γ_left_kind  in allowed_Γ || error("Unsupported Γ_left_kind  = $(extrap.Γ_left_kind)")
+    extrap.Γ_right_kind in allowed_Γ || error("Unsupported Γ_right_kind = $(extrap.Γ_right_kind)")
+  end
 
+  # -- min and max Q defined by the initial non-extrapolated curve
+  Eres_qmin, Eres_qmax = extrema(curve.Q)
+
+  # ----------
   # -- Eres(Q)
-  Eres_fit = _make_interp(curve.Q, curve.Eres; kind=interp.Eres_kind)
+  # ----------
 
+  # -- interpolation
+  _Eres_fit = _make_interp(curve.Q, curve.Eres; kind=interp.Eres_kind)
+
+  # -- extrapolation
+  Eres_fit =
+    (extrap.Eres_left_kind === :none && extrap.Eres_right_kind === :none) ?
+    _Eres_fit :
+    _wrap_with_extrapolation(
+        _Eres_fit
+      , curve.Q
+      , curve.Eres
+      ; left_kind   = extrap.Eres_left_kind
+      , right_kind  = extrap.Eres_right_kind
+      , Qpad_left   = extrap.Qpad_left
+      , Qpad_right  = extrap.Qpad_right
+      , nedge_left  = nedge_left
+      , nedge_right = nedge_right
+    )
+
+  # -------
   # -- Γ(Q)
-  Γ_fit = _make_interp(curve.Q, curve.Γ; kind=interp.Γ_kind)
+  # -------
 
+  # -- interpolation
+  _Γ_fit = _make_interp(curve.Q, curve.Γ; kind=interp.Γ_kind)
+
+  # -- extrapolation
+  Γ_fit = _wrap_with_extrapolation(
+        _Γ_fit
+      , curve.Q
+      , curve.Γ
+      ; left_kind   = extrap.Γ_left_kind
+      , right_kind  = extrap.Γ_right_kind
+      , Qpad_left   = extrap.Qpad_left
+      , Qpad_right  = extrap.Qpad_right
+      , nedge_left  = nedge_left
+      , nedge_right = nedge_right
+      , clamp_nonnegative = true # how would you interpret Γ<0 ?
+    )
+
+
+  # -------
   # -- V(Q)
-  V_fit = if interp.V_kind === :harmonic
+  # -------
+  if interp.V_kind === :harmonic
 
     haskey(mode_freqs, curve.mode_name) || error("Need mode frequency for mode '$(curve.mode_name)' when V_kind = :harmonic")
     ω = Float64(mode_freqs[curve.mode_name])
@@ -549,28 +834,76 @@ function fit_mode_curve(
 
     # -- dimensionless coordinate ! V(Q) = ωQ²/2, NOT ω²Q²/2
     Vref0 = 0.5 * ω * (0.0 - Qeq)^2
+    harmonic_model = HarmonicPotential(ω, Qeq, Vref0)
 
-    HarmonicPotential(ω, Qeq, Vref0)
+    V_fit = harmonic_model
 
-  elseif interp.V_kind === :linear
+  elseif interp.V_kind in (:linear, :poly2, :pchip, :akima)
 
-    target === nothing && error("Need a TargetState for mode '$(curve.mode_name)' when V_kind = :linear")
+    target === nothing && error("Need a TargetState for mode '$(curve.mode_name)' when V_kind = $(interp.V_kind)")
 
-    # -- linear interpolation s.t. V(0) = 0.0
+    # -- linear interpolation to approximate s.t. V(0) = 0.0
     V0 = linterp(target.Q, target.V, 0.0)
-    _make_interp(target.Q, target.V .- V0; kind=:linear)
 
-  elseif interp.V_kind === :poly2
+    # -- interpolation
+    _V_fit = _make_interp(target.Q, target.V .- V0; kind=interp.V_kind)
 
-    target === nothing && error("Need a TargetState for mode '$(curve.mode_name)' when V_kind = :poly2")
+    # -- optional harmonic model for extrapolation
+    if haskey(mode_freqs, curve.mode_name)
+      ω = Float64(mode_freqs[curve.mode_name])
+      Qeq = target.Q[argmin(target.V)]
+      Vref0 = 0.5 * ω * (0.0 - Qeq)^2
+      harmonic_model = HarmonicPotential(ω, Qeq, Vref0)
+    else
+      harmonic_model = nothing
+    end
 
-    # -- quadratic fit of the target potential curve s.t. V(0)=0
-    V0 = linterp(target.Q, target.V, 0.0)
-    _make_interp(target.Q, target.V .- V0; kind=:poly2)
+    Vref = target.V .- V0
+
+    # -- extrapolation
+    V_fit =
+      (extrap.V_left_kind === :none && extrap.V_right_kind === :none) ?
+      _V_fit :
+      _wrap_with_extrapolation(
+          _V_fit
+        , target.Q
+        , Vref
+        ; left_kind   = extrap.V_left_kind
+        , right_kind  = extrap.V_right_kind
+        , Qpad_left   = extrap.Qpad_left
+        , Qpad_right  = extrap.Qpad_right
+        , nedge_left  = nedge_left
+        , nedge_right = nedge_right
+        , harmonic_model = harmonic_model
+      )
 
   else
     error("Unsupported V_kind '$(interp.V_kind)'")
   end
+
+  # -- determine effective usable Q-domain post extrapolation
+  Eres_qmin = extrap.Eres_left_kind  === :none ? Eres_qmin : Eres_qmin - extrap.Qpad_left
+  Eres_qmax = extrap.Eres_right_kind === :none ? Eres_qmax : Eres_qmax + extrap.Qpad_right
+
+  if interp.V_kind === :harmonic
+    V_qmin, V_qmax = (-Inf, Inf)
+  else
+    V_qmin, V_qmax = extrema(target.Q)
+    V_qmin = extrap.V_left_kind  === :none ? V_qmin : V_qmin - extrap.Qpad_left
+    V_qmax = extrap.V_right_kind === :none ? V_qmax : V_qmax + extrap.Qpad_right
+  end
+
+  Qmin = max(Eres_qmin, V_qmin)
+  Qmax = min(Eres_qmax, V_qmax)
+
+  Qmin < Qmax || error("""
+    No overlapping Q-grid found for
+      channel: '$(curve.channel_name)'
+      mode: '$(curve.mode_name)'
+      Eres domain: [$Eres_qmin, $Eres_qmax]
+      V domain: [$V_qmin, $V_qmax]
+  """)
+
 
   return ModeFit(
       curve
@@ -585,26 +918,39 @@ function fit_mode_curve(
 end
 
 """
-    fit_mode_curves(curves, spec; targets_by_mode)
+    fit_mode_curves(curves, spec; targets_by_mode, surface_interp_overrides, surface_extrap_overrides)
 
 Fit a whole vector of `ModeCurve`s into a vector of `ModeFit`s.
 `targets_by_mode` should map mode_name => TargetState (because V(Q) in this sense
 is a property of the normal mode, not of the channel)
 """
 function fit_mode_curves(
-    curves :: AbstractVector{ModeCurve}
+    curves :: AbstractVector{<:ModeCurve}
   , spec :: DissCalcSpec
   ; targets_by_mode :: AbstractDict{String, <:TargetState} = Dict{String, TargetState}()
+  , surface_interp_overrides :: AbstractDict{String, <:Any} = Dict{String, Any}()
+  , surface_extrap_overrides :: AbstractDict{String, <:Any} = Dict{String, Any}()
   )
 
-  return [
-    fit_mode_curve(
-        curve
-      ; interp=spec.interp
-      , target=get(targets_by_mode, curve.mode_name, nothing)
-      , mode_freqs=spec.mode_freqs
-     ) for curve in curves
-   ]
+  fits = ModeFit[]
+
+  for curve in curves
+    interp_over   = _surface_interp_override(surface_interp_overrides, curve.channel_name)
+    extrap_over   = _surface_extrap_override(surface_extrap_overrides, curve.channel_name)
+    interp = _merge_interp_spec(spec.interp, interp_over)
+    extrap = _merge_extrap_spec(spec.extrap, extrap_over)
+    push!(fits,
+      fit_mode_curve(
+          curve
+        ; interp = interp
+        , extrap = extrap
+        , target = get(targets_by_mode, curve.mode_name, nothing)
+        , mode_freqs = spec.mode_freqs
+      )
+    )
+  end
+
+  return fits
 
 end
 
@@ -1005,8 +1351,18 @@ end
 
 Returns an array of DissociationPathwayFit
 """
-function fit_paths(paths :: AbstractVector{<:DissociationPathway}; kind :: Symbol = :linear)
-  return [fit_path(path; kind=kind) for path in paths]
+function fit_paths(
+      paths :: AbstractVector{<:DissociationPathway}
+    ; kind :: Symbol = :linear
+    , surface_interp_overrides :: AbstractDict{String, <:Any} = Dict{String, Any}()
+  )
+  res = DissociationPathwayFit[]
+  for path in paths
+    over = _surface_interp_override(surface_interp_overrides, path.channel)
+    _kind = _path_kind_with_override(kind, over)
+    push!(res, fit_path(path; kind=_kind))
+  end
+  return res
 end
 
 

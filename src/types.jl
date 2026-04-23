@@ -7,6 +7,10 @@ export TargetEnergies, TargetState
 export TrackedResonanceBranch
 export DissociationPathway, DissociationPathwayFit
 export HarmonicPotential
+export PolyInterp1D
+export PchipInterp1D
+export AkimaInterp1D
+export ExtrapSpec
 
 """
     EigenphData
@@ -125,13 +129,30 @@ end
     InterpSpec
 
 Interpolation specification. The kinds of interpolation that are performed
-for the different compontents of the approach.
+for the different components of the approach.
 """
 struct InterpSpec
-  Eres_kind :: Symbol # -- :linear, :poly2, :spline
-  Γ_kind    :: Symbol # -- :linear, :poly2, :spline
-  V_kind    :: Symbol # -- :harmonic, :linear, :poly2, :spline
+  Eres_kind :: Symbol # -- :linear, :poly2, :spline..
+  Γ_kind    :: Symbol # -- :linear, :poly2, :spline..
+  V_kind    :: Symbol # -- :harmonic, :linear, :poly2, :spline..
   path_kind :: Symbol # -- :linear, :poly2..
+end
+
+"""
+    ExtrapSpec
+
+Extrapolation Specification. The kinds of extrapolation that are performed for the different
+components of the approach.
+"""
+struct ExtrapSpec
+  Eres_left_kind  :: Symbol
+  Eres_right_kind :: Symbol
+  Γ_left_kind     :: Symbol
+  Γ_right_kind    :: Symbol
+  V_left_kind     :: Symbol
+  V_right_kind    :: Symbol
+  Qpad_left       :: Float64
+  Qpad_right      :: Float64
 end
 
 """
@@ -159,6 +180,7 @@ struct DissCalcSpec
   combine_Eres :: Symbol # -- :additive, ..
   combine_Γ    :: Symbol # -- :additive, :max..
   interp       :: InterpSpec
+  extrap       :: ExtrapSpec
   path         :: PathSpec
 end
 
@@ -274,6 +296,13 @@ struct LinearInterp1D
 end
 
 """
+    LinearInterp1D(xq)
+
+Callable version of the LinearInterp1D struct
+"""
+(f::LinearInterp1D)(xq::Real) = linterp(f.x, f.y, Float64(xq))
+
+"""
     PolyInterp1D
 
 A 1D polynomila interpolation.
@@ -284,6 +313,58 @@ struct PolyInterp1D
   xmin   :: Float64
   xmax   :: Float64
   clampx :: Bool
+end
+
+"""
+    PolyInterp1D(xq)
+
+Callable version of the PolyInterp1D struct
+"""
+function (f :: PolyInterp1D)(xq :: Real)
+  x = Float64(xq)
+  f.clampx && (x = clamp(x, f.xmin, f.xmax))
+  y = f.coeffs[end]
+  for i in (length(f.coeffs) - 1):-1:1
+    @inbounds y = muladd(y, x, f.coeffs[i])
+  end
+  return y
+end
+
+"""
+    PCHIPInterp1D
+
+Shape-preserving Piecewise-Cubic Hermite Interpolating Polynomial (PCHIP).
+Wrapper around `DataInterpolations.PCHIPInterpolation`
+"""
+struct PCHIPInterp1D{T}
+  interp :: T
+  xmin   :: Float64
+  xmax   :: Float64
+  clampx :: Bool
+end
+
+function (f :: PCHIPInterp1D)(xq :: Real)
+  x = Float64(xq)
+  f.clampx && (x = clamp(x, f.xmin, f.xmax))
+  return f.interp(x)
+end
+
+"""
+    AkimaInterp1D
+
+Akima PCHIP; wrapper around `DataInterpolations.AkimaInterpolation`
+"""
+struct AkimaInterp1D{T}
+  interp :: T
+  xmin   :: Float64
+  xmax   :: Float64
+  clampx :: Bool
+end
+
+function (f :: AkimaInterp1D)(xq :: Real)
+  x = Float64(xq)
+  f.clampx && (x = clamp(x, f.xmin, f.xmax))
+  return f.interp(x)
 end
 
 struct HarmonicPotential

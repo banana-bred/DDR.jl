@@ -1,4 +1,5 @@
 using LinearAlgebra: \
+using DataInterpolations: PCHIPInterpolation, AkimaInterpolation
 
 ###############
 ### HELPERS ###
@@ -38,34 +39,14 @@ function _polyfit(x :: Vector{Float64}, y :: Vector{Float64}, deg :: Int)
 end
 
 """
-    LinearInterp1D(xq)
-
-Callable version of the LinearInterp1D struct
-"""
-(f::LinearInterp1D)(xq::Real) = linterp(f.x, f.y, Float64(xq))
-
-"""
-    PolyInterp1D(xq)
-
-Callable version of the PolyInterp1D struct
-"""
-function (f :: PolyInterp1D)(xq :: Real)
-  x = Float64(xq)
-  f.clampx && (x = clamp(x, f.xmin, f.xmax))
-  y = f.coeffs[end]
-  for i in (length(f.coeffs) - 1):-1:1
-    @inbounds y = muladd(y, x, f.coeffs[i])
-  end
-  return y
-end
-
-"""
     _make_interp(x, y; kind=:linear, clampx=false)
 
 Constructs a simple 1D interpolant. Allowed `kind`s:
 - :linear
 - :poly2 (quadratic)
-- :spline
+- :pchip
+- :akima
+- :spline (currently undefined/unsupported)
 """
 function _make_interp(
     x :: AbstractVector
@@ -77,13 +58,32 @@ function _make_interp(
   xs, ys = _sorted_xy(x, y)
 
   if kind === :linear
+
     return LinearInterp1D(xs, ys)
+
   elseif kind === :poly2
+
     c = _polyfit(xs, ys, 2)
     return PolyInterp1D(c, xs[1], xs[end], clampx)
+
+  elseif kind === :pchip
+
+    itp = PCHIPInterpolation(ys, xs)
+    return PCHIPInterp1D(itp, xs[1], xs[end], clampx)
+
+  elseif kind === :akima
+
+    itp = AkimaInterpolation(ys, xs)
+    return AkimaInterp1D(itp, xs[1], xs[end], clampx)
+
   elseif kind === :spline
+
     error("Spline not programmed yet !")
+
   else
+
     error("Unsupported interpolation kind $kind")
+
   end
+
 end
