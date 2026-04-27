@@ -96,6 +96,13 @@ function ζ_path_fit(
   sgrid = pathfit.s
   qmat  = pathfit.q
 
+  isempty(sgrid) && error("Can't build ζ(s) for an empty path !")
+
+  # -- center ζ at the minimum of the fitted V(s)
+  Vvals = [V(pathfit, s) for s in sgrid]
+  iminV = argmin(Vvals)
+  q0_by_mode = Dict( mode_name => Float64(qmat[iminV, imode]) for (imode, mode_name) in enumerate(modes) )
+
   ns = length(sgrid)
   vals = Vector{Float64}(undef, ns)
 
@@ -103,7 +110,7 @@ function ζ_path_fit(
     amp = 1.0
     for (imode, mode_name) in enumerate(modes)
       haskey(targets_by_mode, mode_name) || error("No target state found for mode '$mode_name'")
-      amp *= ζ_Q(targets_by_mode[mode_name], qmat[is, imode])
+      amp *= ζ_Q(targets_by_mode[mode_name], qmat[is, imode]; Q0 = q0_by_mode[mode_name])
     end
     vals[is] = amp
   end

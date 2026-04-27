@@ -321,57 +321,91 @@ function _get_default_q0_candidates(surface :: ChannelSurface)
 
 end
 
-@inline _surface_interp_override(
-      surface_interp_overrides :: AbstractDict{String, <:Any}
-    , channel_name :: AbstractString
-   ) = get(surface_interp_overrides, String(channel_name), nothing)
+# @inline _surface_interp_override(
+#       surface_interp_overrides :: AbstractDict{String, <:Any}
+#     , channel_name :: AbstractString
+#    ) = get(surface_interp_overrides, String(channel_name), nothing)
 
-@inline _surface_extrap_override(
-      surface_extrap_overrides :: AbstractDict{String, <:Any}
-    , channel_name :: AbstractString
-   ) = get(surface_extrap_overrides, String(channel_name), nothing)
+# @inline _surface_extrap_override(
+#       surface_extrap_overrides :: AbstractDict{String, <:Any}
+#     , channel_name :: AbstractString
+#    ) = get(surface_extrap_overrides, String(channel_name), nothing)
 
-@inline function _merge_interp_spec(
+@inline function _merge_res_interp_spec(
       interp :: InterpSpec
     , override
   )
-
-  override === nothing && return interp
-
+  override == nothing && return interp
   return InterpSpec(
       isnothing(override.Eres_kind) ? interp.Eres_kind : override.Eres_kind
     , isnothing(override.Γ_kind)    ? interp.Γ_kind    : override.Γ_kind
-    , isnothing(override.V_kind)    ? interp.V_kind    : override.V_kind
-    , isnothing(override.path_kind) ? interp.path_kind : override.path_kind
+    , interp.V_kind
+    , interp.path_kind
   )
 end
 
-@inline function _merge_extrap_spec(
+@inline function _merge_res_extrap_spec(
       extrap :: ExtrapSpec
     , override
   )
-
-  override === nothing && return extrap
-
+  override == nothing && return extrap
   return ExtrapSpec(
-      isnothing(override.Eres_left_kind)  ? extrap.Eres_left_kind  : override.Eres_left_kind
-    , isnothing(override.Eres_right_kind) ? extrap.Eres_right_kind : override.Eres_right_kind
-    , isnothing(override.Γ_left_kind)     ? extrap.Γ_left_kind     : override.Γ_left_kind
-    , isnothing(override.Γ_right_kind)    ? extrap.Γ_right_kind    : override.Γ_right_kind
-    , isnothing(override.V_left_kind)     ? extrap.V_left_kind     : override.V_left_kind
-    , isnothing(override.V_right_kind)    ? extrap.V_right_kind    : override.V_right_kind
-    , isnothing(override.Qpad_left)       ? extrap.Qpad_left       : override.Qpad_left
-    , isnothing(override.Qpad_right)      ? extrap.Qpad_right      : override.Qpad_right
+      isnothing(override.Eres_left_kind)   ? extrap.Eres_left_kind   : override.Eres_left_kind
+    , isnothing(override.Eres_right_kind)  ? extrap.Eres_right_kind  : override.Eres_right_kind
+    , isnothing(override.Γ_left_kind)      ? extrap.Γ_left_kind      : override.Γ_left_kind
+    , isnothing(override.Γ_right_kind)     ? extrap.Γ_right_kind     : override.Γ_right_kind
+    , isnothing(override.EresΓ_Qpad_left)  ? extrap.EresΓ_Qpad_left  : override.EresΓ_Qpad_left
+    , isnothing(override.EresΓ_Qpad_right) ? extrap.EresΓ_Qpad_right : override.EresΓ_Qpad_right
+    , extrap.V_left_kind
+    , extrap.V_right_kind
+    , extrap.V_Qpad_left
+    , extrap.V_Qpad_right
   )
 end
 
-@inline function _path_kind_with_override(
-      default_kind :: Symbol
-    , override
-  )
-  override === nothing && return default_kind
-  return isnothing(override.path_kind) ? default_kind : override.path_kind
-end
+# @inline function _merge_interp_spec(
+#       interp :: InterpSpec
+#     , override
+#   )
+
+#   override === nothing && return interp
+
+#   return InterpSpec(
+#       isnothing(override.Eres_kind) ? interp.Eres_kind : override.Eres_kind
+#     , isnothing(override.Γ_kind)    ? interp.Γ_kind    : override.Γ_kind
+#     , isnothing(override.V_kind)    ? interp.V_kind    : override.V_kind
+#     , isnothing(override.path_kind) ? interp.path_kind : override.path_kind
+#   )
+# end
+
+# @inline function _merge_extrap_spec(
+#       extrap :: ExtrapSpec
+#     , override
+#   )
+
+#   override === nothing && return extrap
+
+#   return ExtrapSpec(
+#       isnothing(override.Eres_left_kind)   ? extrap.Eres_left_kind   : override.Eres_left_kind
+#     , isnothing(override.Eres_right_kind)  ? extrap.Eres_right_kind  : override.Eres_right_kind
+#     , isnothing(override.Γ_left_kind)      ? extrap.Γ_left_kind      : override.Γ_left_kind
+#     , isnothing(override.Γ_right_kind)     ? extrap.Γ_right_kind     : override.Γ_right_kind
+#     , isnothing(override.EresΓ_Qpad_left)  ? extrap.EresΓ_Qpad_left  : override.EresΓ_Qpad_left
+#     , isnothing(override.EresΓ_Qpad_right) ? extrap.EresΓ_Qpad_right : override.EresΓ_Qpad_right
+#     , isnothing(override.V_left_kind)      ? extrap.V_left_kind      : override.V_left_kind
+#     , isnothing(override.V_right_kind)     ? extrap.V_right_kind     : override.V_right_kind
+#     , isnothing(override.V_Qpad_left)      ? extrap.V_Qpad_left      : override.V_Qpad_left
+#     , isnothing(override.V_Qpad_right)     ? extrap.V_Qpad_right     : override.V_Qpad_right
+#   )
+# end
+
+# @inline function _path_kind_with_override(
+#       default_kind :: Symbol
+#     , override
+#   )
+#   override === nothing && return default_kind
+#   return isnothing(override.path_kind) ? default_kind : override.path_kind
+# end
 
 """
     _edge_poly2_interp(x, y; side=:left, nedge=5)
@@ -506,39 +540,50 @@ function _wrap_with_extrapolation(
 
 end
 
-###################
-###################
-### P U B L I C ###
-##VVVVVVVVVVVVVVV##
-#vvvvvvvvvvvvvvvvv#
+@inline _mode_V_override(
+      mode_V_overrides :: AbstractDict{String, <:Any}
+    , mode_name :: AbstractString
+) = get(mode_V_overrides, String(mode_name), nothing)
 
-"""
-    build_dissociation_path_autostart(surface, space; q0_candidates = nothing, range_pad = 0.0, grad_tol = 1e-8)
+@inline _res_interp_override(res_interp_overrides, channel_name, mode_name) =
+  get(res_interp_overrides, (String(channel_name), String(mode_name)), nothing)
 
-Constructs a dissociatin path by trying several starting points `q0` until a non-empty path is found
-"""
-function build_dissociation_path_autostart(
-    surface :: ChannelSurface
-  , spec :: DissCalcSpec
-  ; q0_candidates :: Union{Nothing, AbstractVector} = nothing
-  , range_pad :: Float64 = 0.0
-  , grad_tol :: Float64 = 1e-8
-  )
+@inline _res_extrap_override(res_extrap_overrides, channel_name, mode_name) =
+  get(res_extrap_overrides, (String(channel_name), String(mode_name)), nothing)
 
-  cands = q0_candidates === nothing ? _get_default_q0_candidates(surface) : q0_candidates
+  ###################
+  ###################
+  ### P U B L I C ###
+  ##VVVVVVVVVVVVVVV##
+  #vvvvvvvvvvvvvvvvv#
 
-  for q0 in cands
-    path = build_dissociation_path(
-        surface
-      , spec
-      ; q0=q0
-      , range_pad=range_pad
-      , grad_tol=grad_tol
-   )
-    isempty(path.s) || return path
-  end
+  """
+      build_dissociation_path_autostart(surface, space; q0_candidates = nothing, range_pad = 0.0, grad_tol = 1e-8)
 
-  # -- nothing worked; return old default
+  Constructs a dissociatin path by trying several starting points `q0` until a non-empty path is found
+  """
+  function build_dissociation_path_autostart(
+      surface :: ChannelSurface
+    , spec :: DissCalcSpec
+    ; q0_candidates :: Union{Nothing, AbstractVector} = nothing
+    , range_pad :: Float64 = 0.0
+    , grad_tol :: Float64 = 1e-8
+    )
+
+    cands = q0_candidates === nothing ? _get_default_q0_candidates(surface) : q0_candidates
+
+    for q0 in cands
+      path = build_dissociation_path(
+          surface
+        , spec
+        ; q0=q0
+        , range_pad=range_pad
+        , grad_tol=grad_tol
+     )
+      isempty(path.s) || return path
+    end
+
+    # -- nothing worked; return old default
   return build_dissociation_path(
       surface
     , spec
@@ -567,16 +612,18 @@ function build_dissociation_paths_autostart(
 end
 
 """
-    prepare_dissociation_model(widetable, spec; targets_by_mode, surface_interp_overrides, surface_extrap_overrides, kwargs...)
+    prepare_dissociation_model(widetable, spec; targets_by_mode, res_interp_overrides, res_extrap_overrides, mode_V_overrides, kwargs...)
 
 Widetable -> dissociation model pipeline
 """
 function prepare_dissociation_model(
-    widetable                :: Table
-  , spec                     :: DissCalcSpec
-  ; targets_by_mode          :: AbstractDict{String, <:Any} = Dict{String, Any}()
-  , surface_interp_overrides :: AbstractDict{String, <:Any} = Dict{String, Any}()
-  , surface_extrap_overrides :: AbstractDict{String, <:Any} = Dict{String, Any}()
+    widetable            :: Table
+  , spec                 :: DissCalcSpec
+  ; targets_by_mode      :: AbstractDict{String, <:Any} = Dict{String, Any}()
+  , res_interp_overrides :: AbstractDict{Tuple{String, String}, <:Any} = Dict{Tuple{String, String}, Any}()
+  , res_extrap_overrides :: AbstractDict{Tuple{String, String}, <:Any} = Dict{Tuple{String, String}, Any}()
+  , mode_V_overrides     :: AbstractDict{String, <:Any} = Dict{String, Any}()
+  , path_autostart       :: Bool = false
   , kwargs...
   )
   validate_calc_spec(widetable, spec)
@@ -586,15 +633,19 @@ function prepare_dissociation_model(
       curves
     , spec
     ; targets_by_mode = targets_by_mode
-    , surface_interp_overrides=surface_interp_overrides
-    , surface_extrap_overrides=surface_extrap_overrides
+    , res_interp_overrides = res_interp_overrides
+    , res_extrap_overrides = res_extrap_overrides
+    , mode_V_overrides = mode_V_overrides
   )
   surfaces  = build_channel_surfaces(fits, spec)
-  paths     = build_dissociation_paths(surfaces, spec; kwargs...)
+  paths     = if path_autostart
+    build_dissociation_paths(surfaces, spec; kwargs...)
+  else
+    build_dissociation_paths_autostart(surfaces, spec; kwargs...)
+  end
   pathfits  = fit_paths(
       paths
     ; kind = spec.interp.path_kind
-    , surface_interp_overrides=surface_interp_overrides
   )
   return (
       longtable = longtable
@@ -790,8 +841,8 @@ function fit_mode_curve(
       , curve.Eres
       ; left_kind   = extrap.Eres_left_kind
       , right_kind  = extrap.Eres_right_kind
-      , Qpad_left   = extrap.Qpad_left
-      , Qpad_right  = extrap.Qpad_right
+      , Qpad_left   = extrap.EresΓ_Qpad_left
+      , Qpad_right  = extrap.EresΓ_Qpad_right
       , nedge_left  = nedge_left
       , nedge_right = nedge_right
     )
@@ -810,8 +861,8 @@ function fit_mode_curve(
       , curve.Γ
       ; left_kind   = extrap.Γ_left_kind
       , right_kind  = extrap.Γ_right_kind
-      , Qpad_left   = extrap.Qpad_left
-      , Qpad_right  = extrap.Qpad_right
+      , Qpad_left   = extrap.EresΓ_Qpad_left
+      , Qpad_right  = extrap.EresΓ_Qpad_right
       , nedge_left  = nedge_left
       , nedge_right = nedge_right
       , clamp_nonnegative = true # how would you interpret Γ<0 ?
@@ -870,8 +921,8 @@ function fit_mode_curve(
         , Vref
         ; left_kind   = extrap.V_left_kind
         , right_kind  = extrap.V_right_kind
-        , Qpad_left   = extrap.Qpad_left
-        , Qpad_right  = extrap.Qpad_right
+        , Qpad_left   = extrap.V_Qpad_left
+        , Qpad_right  = extrap.V_Qpad_right
         , nedge_left  = nedge_left
         , nedge_right = nedge_right
         , harmonic_model = harmonic_model
@@ -882,15 +933,15 @@ function fit_mode_curve(
   end
 
   # -- determine effective usable Q-domain post extrapolation
-  Eres_qmin = extrap.Eres_left_kind  === :none ? Eres_qmin : Eres_qmin - extrap.Qpad_left
-  Eres_qmax = extrap.Eres_right_kind === :none ? Eres_qmax : Eres_qmax + extrap.Qpad_right
+  Eres_qmin = extrap.Eres_left_kind  === :none ? Eres_qmin : Eres_qmin - extrap.EresΓ_Qpad_left
+  Eres_qmax = extrap.Eres_right_kind === :none ? Eres_qmax : Eres_qmax + extrap.EresΓ_Qpad_right
 
   if interp.V_kind === :harmonic
     V_qmin, V_qmax = (-Inf, Inf)
   else
     V_qmin, V_qmax = extrema(target.Q)
-    V_qmin = extrap.V_left_kind  === :none ? V_qmin : V_qmin - extrap.Qpad_left
-    V_qmax = extrap.V_right_kind === :none ? V_qmax : V_qmax + extrap.Qpad_right
+    V_qmin = extrap.V_left_kind  === :none ? V_qmin : V_qmin - extrap.V_Qpad_left
+    V_qmax = extrap.V_right_kind === :none ? V_qmax : V_qmax + extrap.V_Qpad_right
   end
 
   Qmin = max(Eres_qmin, V_qmin)
@@ -928,17 +979,39 @@ function fit_mode_curves(
     curves :: AbstractVector{<:ModeCurve}
   , spec :: DissCalcSpec
   ; targets_by_mode :: AbstractDict{String, <:TargetState} = Dict{String, TargetState}()
-  , surface_interp_overrides :: AbstractDict{String, <:Any} = Dict{String, Any}()
-  , surface_extrap_overrides :: AbstractDict{String, <:Any} = Dict{String, Any}()
+  , res_interp_overrides :: AbstractDict{Tuple{String, String}, <:Any} = Dict{Tuple{String, String}, Any}()
+  , res_extrap_overrides :: AbstractDict{Tuple{String, String}, <:Any} = Dict{Tuple{String, String}, Any}()
+  , mode_V_overrides :: AbstractDict{String, <:Any} = Dict{String, Any}()
   )
 
   fits = ModeFit[]
 
   for curve in curves
-    interp_over   = _surface_interp_override(surface_interp_overrides, curve.channel_name)
-    extrap_over   = _surface_extrap_override(surface_extrap_overrides, curve.channel_name)
-    interp = _merge_interp_spec(spec.interp, interp_over)
-    extrap = _merge_extrap_spec(spec.extrap, extrap_over)
+    interp_over = _res_interp_override(res_interp_overrides, curve.channel_name, curve.mode_name)
+    extrap_over = _res_extrap_override(res_extrap_overrides, curve.channel_name, curve.mode_name)
+    V_over      = _mode_V_override(mode_V_overrides, curve.mode_name)
+    interp = _merge_res_interp_spec(spec.interp, interp_over)
+    extrap = _merge_res_extrap_spec(spec.extrap, extrap_over)
+    if V_over !== nothing
+      interp = InterpSpec(
+          interp.Eres_kind
+        , interp.Γ_kind
+        , isnothing(V_over.V_kind) ? interp.V_kind : V_over.V_kind
+        , interp.path_kind
+      )
+      extrap = ExtrapSpec(
+          extrap.Eres_left_kind
+        , extrap.Eres_right_kind
+        , extrap.Γ_left_kind
+        , extrap.Γ_right_kind
+        , extrap.EresΓ_Qpad_left
+        , extrap.EresΓ_Qpad_right
+        , isnothing(V_over.V_left_kind) ? extrap.V_left_kind : V_over.V_left_kind
+        , isnothing(V_over.V_right_kind) ? extrap.V_right_kind : V_over.V_right_kind
+        , isnothing(V_over.V_Qpad_left) ? extrap.V_Qpad_left : V_over.V_Qpad_left
+        , isnothing(V_over.V_Qpad_right) ? extrap.V_Qpad_right : V_over.V_Qpad_right
+      )
+    end
     push!(fits,
       fit_mode_curve(
           curve
@@ -1354,13 +1427,10 @@ Returns an array of DissociationPathwayFit
 function fit_paths(
       paths :: AbstractVector{<:DissociationPathway}
     ; kind :: Symbol = :linear
-    , surface_interp_overrides :: AbstractDict{String, <:Any} = Dict{String, Any}()
   )
   res = DissociationPathwayFit[]
   for path in paths
-    over = _surface_interp_override(surface_interp_overrides, path.channel)
-    _kind = _path_kind_with_override(kind, over)
-    push!(res, fit_path(path; kind=_kind))
+    push!(res, fit_path(path; kind=kind))
   end
   return res
 end

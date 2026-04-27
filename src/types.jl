@@ -145,14 +145,16 @@ Extrapolation Specification. The kinds of extrapolation that are performed for t
 components of the approach.
 """
 struct ExtrapSpec
-  Eres_left_kind  :: Symbol
-  Eres_right_kind :: Symbol
-  Γ_left_kind     :: Symbol
-  Γ_right_kind    :: Symbol
-  V_left_kind     :: Symbol
-  V_right_kind    :: Symbol
-  Qpad_left       :: Float64
-  Qpad_right      :: Float64
+  Eres_left_kind   :: Symbol
+  Eres_right_kind  :: Symbol
+  Γ_left_kind      :: Symbol
+  Γ_right_kind     :: Symbol
+  EresΓ_Qpad_left  :: Float64
+  EresΓ_Qpad_right :: Float64
+  V_left_kind      :: Symbol
+  V_right_kind     :: Symbol
+  V_Qpad_left      :: Float64
+  V_Qpad_right     :: Float64
 end
 
 """
