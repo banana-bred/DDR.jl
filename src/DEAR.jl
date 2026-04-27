@@ -5,6 +5,7 @@ module DEAR
 include("units.jl")
 include("types.jl")
 include("phases.jl")
+include("phases_background.jl")
 include("io.jl")
 include("utils.jl")
 include("plotting.jl")
