@@ -623,7 +623,7 @@ function prepare_dissociation_model(
   , res_interp_overrides :: AbstractDict{Tuple{String, String}, <:Any} = Dict{Tuple{String, String}, Any}()
   , res_extrap_overrides :: AbstractDict{Tuple{String, String}, <:Any} = Dict{Tuple{String, String}, Any}()
   , mode_V_overrides     :: AbstractDict{String, <:Any} = Dict{String, Any}()
-  , path_autostart       :: Bool = false
+  , path_autostart       :: Bool = true
   , kwargs...
   )
   validate_calc_spec(widetable, spec)
@@ -639,9 +639,9 @@ function prepare_dissociation_model(
   )
   surfaces  = build_channel_surfaces(fits, spec)
   paths     = if path_autostart
-    build_dissociation_paths(surfaces, spec; kwargs...)
-  else
     build_dissociation_paths_autostart(surfaces, spec; kwargs...)
+  else
+    build_dissociation_paths(surfaces, spec; kwargs...)
   end
   pathfits  = fit_paths(
       paths
@@ -855,7 +855,7 @@ function fit_mode_curve(
   _Γ_fit = _make_interp(curve.Q, curve.Γ; kind=interp.Γ_kind)
 
   # -- extrapolation
-  Γ_fit = _wrap_with_extrapolation(
+  Γ_fit_raw = _wrap_with_extrapolation(
         _Γ_fit
       , curve.Q
       , curve.Γ
@@ -865,8 +865,14 @@ function fit_mode_curve(
       , Qpad_right  = extrap.EresΓ_Qpad_right
       , nedge_left  = nedge_left
       , nedge_right = nedge_right
-      , clamp_nonnegative = true # how would you interpret Γ<0 ?
+      , clamp_nonnegative = false # how would you interpret Γ<0 ?
     )
+
+  Γ_fit = q -> begin
+    val = Γ_fit_raw(q)
+    val < 0.0 && throw(DomainError(val, "negative Γ at Q=$q for $(curve.channel_name)/$(curve.mode_name)"))
+    return val
+  end
 
 
   # -------

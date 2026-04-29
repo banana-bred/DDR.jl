@@ -1,6 +1,7 @@
 using QuadGK: quadgk
 
 export find_s_all_Eres, find_s_all_U, find_s_all
+export find_s_all_cached
 export find_s_Eres, find_s_U, find_s
 export select_root
 export thermal_rate, thermal_rates
@@ -19,6 +20,20 @@ export resolve_spinwght
     s < 0 ? :negative :
     s > 0 ? :positive :
             :inner
+
+function _path_root_cache(pathfit :: DissociationPathwayFit)
+  s = Float64.(pathfit.s)
+  return (
+      s = s
+    , Eres_vals = [Eres(pathfit, si) for si in s]
+    , U_vals = [U(pathfit, si) for si in s]
+  )
+end
+
+##############
+### PUBLIC ###
+##############
+
 
 """
     get_spinmult(label)
@@ -161,6 +176,42 @@ end
 @inline find_s_U(pathfit::DissociationPathwayFit, Etot::Real; kwargs...) =
   find_s(pathfit, U, Etot; kwargs...)
 
+function find_s_all_cached(
+      pathfit :: DissociationPathwayFit
+    , sgrid :: AbstractVector{Float64}
+    , vals :: AbstractVector{Float64}
+    , target :: Float64
+    ; kind :: Symbol
+    , tol :: Float64 = 1e-10
+  )
+
+  br = _find_brackets(sgrid, vals, target)
+  isempty(br) && return Float64[]
+
+  roots = Float64[]
+
+  for (i, j) in br
+    if i == j
+      push!(roots, sgrid[i])
+    else
+      g = if kind === :Eres
+        s -> Eres(pathfit, s) - target
+      elseif kind === :U
+        s -> U(pathfit, s) - target
+      else
+        error("unsupported cached root kind '$kind'")
+      end
+
+      push!(roots, _bisect_root(g, sgrid[i], sgrid[j]; tol=tol))
+    end
+  end
+
+  sort!(roots)
+  unique!(roots)
+  return roots
+
+end
+
 """
     select_root(roots; branch, sref)
 
@@ -272,7 +323,7 @@ function channel_E0(channel :: Channel, mode_freqs :: AbstractDict{String, <:Rea
 end
 
 """
-    σ(pathfit, ε; E0, ζ_eval, Etot=nothing, branch_ε=:inner, branch_Etot=:same_side, tol=1e-10)
+    σ(pathfit, ε; E0, ζ_eval, Etot=nothing, branch_ε=:inner, branch_Etot=:inner, tol=1e-10)
 
 Compute the dissociation cross section for a single electron energy `ε`.
 
@@ -291,11 +342,12 @@ Arguments
 function σ(
     pathfit :: DissociationPathwayFit
   , ε :: Real
+  , cache
   ; E0 :: Real
   , ζ_eval
   , Etot :: Union{Real, Nothing} = nothing
   , branch_ε :: Symbol = :inner
-  , branch_Etot :: Symbol = :same_side
+  , branch_Etot :: Symbol = :inner
   , tol :: Real = 1e-10
   )
 
@@ -305,13 +357,13 @@ function σ(
   _Etot = Etot === nothing ? Float64(E0) + ε : Float64(Etot)
 
   # -- find s_ε
-  roots_ε = find_s_all_Eres(pathfit, ε; tol=tol)
+  roots_ε = find_s_all_cached(pathfit, cache.s, cache.Eres_vals, ε; kind=:Eres, tol=tol)
   isempty(roots_ε) && return 0.0
   s_ε = select_root(roots_ε; branch=branch_ε)
   s_ε === nothing && return 0.0
 
   # -- find S_E
-  roots_Etot = find_s_all_U(pathfit, _Etot; tol=tol)
+  roots_Etot = find_s_all_cached(pathfit, cache.s, cache.U_vals, _Etot; kind=:U, tol=tol)
   isempty(roots_Etot) && return 0.0
 
   s_Etot = if branch_Etot === :same_side
@@ -344,7 +396,8 @@ function σ(
     , energies :: AbstractVector{<:Real}
     ; kwargs...
   )
-  return [σ(pathfit, ε; kwargs...) for ε in energies]
+  cache = _path_root_cache(pathfit)
+  return [σ(pathfit, ε, cache; kwargs...) for ε in energies]
 end
 
 function compute_partial_dissociation(
